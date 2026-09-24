@@ -528,7 +528,7 @@ See the [remaining roadmap](docs/roadmap.md) for follow-up work and [detailed pr
 
 Git tags use a `v` prefix; Docker Hub version tags omit it. Stable and prerelease tags create corresponding GitHub releases. Pull requests build and test without registry logins or image publication; ordinary feature-branch pushes do not trigger CI. Manual workflow runs can publish the selected ref, so use pull requests for validation alone. `latest` tracks successful `main` builds as well as stable releases; use a full version or digest for a pinned deployment.
 
-Version `0.3.0` on Docker Hub is pinned to the previously verified build of commit `1911fc8`. The automated Docker Hub workflow applies to subsequent builds; it does not replace that existing release image. The [release guide](docs/releases.md) records its digest, explains registry credentials and describes versioning, release notes, verification and recovery from failed publication.
+The [v0.3.0 release](https://github.com/Mo7ammedd/LLMProxy/releases/tag/v0.3.0) records its source commit and verified image digest and includes SPDX SBOMs, build provenance and vulnerability reports. Both registry digests have Sigstore signatures and scan attestations. The [release guide](docs/releases.md) explains signature verification, registry credentials, versioning and recovery from failed publication.
 
 GHCR uses the repository's `GITHUB_TOKEN`; Docker Hub uses the `DOCKERHUB_USERNAME` repository variable and encrypted `DOCKERHUB_TOKEN` Actions secret. The maintained [Docker Hub overview](docs/dockerhub.md) is synchronized after successful `main` publication. Reusable NuGet packages remain a possible future distribution channel; the gateway is a standalone server today.
 

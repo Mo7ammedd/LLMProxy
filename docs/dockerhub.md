@@ -11,13 +11,13 @@ Self-hosted, OpenAI-compatible LLM gateway built with C# and .NET 10. Applicatio
 | `0.3.0` | `linux/amd64`, `linux/arm64` | Provider key dashboard, shared pools, alerts and signed/scanned images |
 | `latest` | `linux/amd64`, `linux/arm64` | Successful main builds and stable releases; use a full version or digest to pin a deployment |
 
-Version 0.3.0 is built from [commit 1911fc8](https://github.com/Mo7ammedd/LLMProxy/commit/1911fc881e39bbe033a7fa57a4d7ce9573a05c6c). The image passed the repository's [CI checks](https://github.com/Mo7ammedd/LLMProxy/actions/runs/35991763024), including native AMD64 and ARM64 container and SDK integration tests.
+The [v0.3.0 release](https://github.com/Mo7ammedd/LLMProxy/releases/tag/v0.3.0) records its source commit, verified image digest and security evidence. The [publication workflow](https://github.com/Mo7ammedd/LLMProxy/blob/main/.github/workflows/ci.yml) requires native AMD64 and ARM64 container/SDK tests, vulnerability scans and signature verification before creating a release.
 
 ```bash
 docker pull mohammedtv/llmproxy:0.3.0
 ```
 
-Version 0.3.0's multi-platform digest is `sha256:a8bd1b3e93b12549733b86fbb0be9809704924e2a2e27bee075df4c7ab56d3db`. GitHub source tags have a `v` prefix, while Docker Hub version tags omit it. See the [release guide](https://github.com/Mo7ammedd/LLMProxy/blob/main/docs/releases.md) for tag conventions and verified builds.
+For immutable deployments, use the digest in the release's `image-digest.txt` asset and verify its signature using the [release guide](https://github.com/Mo7ammedd/LLMProxy/blob/main/docs/releases.md#signatures-sboms-and-vulnerability-policy). GitHub source tags have a `v` prefix, while Docker Hub version tags omit it.
 
 ## Quick start
 
