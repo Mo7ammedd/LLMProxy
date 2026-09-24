@@ -7,6 +7,12 @@ import uuid
 from smoke_common import ADMIN_KEY, KEY, ROOT, check_http, check_persisted_usage, check_sdks, request, wait_ready
 
 
+def published_url(container, internal_port):
+    inspection = json.loads(subprocess.check_output(["docker", "inspect", container], text=True))[0]
+    host_port = inspection["NetworkSettings"]["Ports"][f"{internal_port}/tcp"][0]["HostPort"]
+    return f"http://127.0.0.1:{host_port}"
+
+
 def main():
     project = "llmproxy-smoke-" + uuid.uuid4().hex[:8]
     command = ["docker", "compose", "--project-name", project, "--env-file", "tests/docker/test.env",
@@ -57,6 +63,7 @@ def main():
             raise AssertionError("A disabled bootstrap key was re-enabled by restart.")
         except urllib.error.HTTPError as error:
             assert error.code == 401
+        print("Compose persistence, Redis limits and key revocation survived restart.", flush=True)
 
         # Exercise the primary one-container experience and an alternate internal listening port.
         subprocess.run(["docker", "run", "--detach", "--name", standalone, "--network", project + "_gateway",
@@ -66,20 +73,20 @@ def main():
                         "--env", "LLMProxy__Providers__OpenAI__BaseUrl=http://mock:9000/v1",
                         "--env", "LLMProxy__Providers__OpenAI__AllowInsecureHttp=true",
                         "llmproxy:smoke"], check=True, capture_output=True, text=True)
-        inspection = json.loads(subprocess.check_output(["docker", "inspect", standalone], text=True))[0]
-        standalone_port = inspection["NetworkSettings"]["Ports"]["8080/tcp"][0]["HostPort"]
-        standalone_url = f"http://127.0.0.1:{standalone_port}"
+        standalone_url = published_url(standalone, 8080)
         wait_ready(standalone_url)
         check_http(standalone_url)
         standalone_count = check_persisted_usage(standalone_url)
         subprocess.run(["docker", "restart", standalone], check=True, capture_output=True)
+        # Docker may assign a new ephemeral host port when restarting this container.
+        standalone_url = published_url(standalone, 8080)
         wait_ready(standalone_url)
         assert check_persisted_usage(standalone_url) == standalone_count
         subprocess.run(["docker", "exec", standalone, "dotnet", "LLMProxy.Server.dll", "healthcheck"], check=True)
         compose("stop", "--timeout", "60", "llmproxy")
         inspection = json.loads(subprocess.check_output(["docker", "inspect", container], text=True))[0]
         assert inspection["State"]["ExitCode"] == 0
-        print("Docker non-root execution, health, PostgreSQL persistence, Redis and graceful shutdown passed.", flush=True)
+        print("Docker non-root execution, health, PostgreSQL/SQLite persistence, Redis and graceful shutdown passed.", flush=True)
     except Exception:
         subprocess.run(command + ["logs", "--tail", "100"], cwd=ROOT, env=environment, check=False)
         subprocess.run(["docker", "logs", "--tail", "100", standalone], check=False)
