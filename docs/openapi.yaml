@@ -1,0 +1,414 @@
+openapi: 3.1.0
+info:
+  title: LLMProxy
+  version: 0.1.0
+  description: OpenAI-compatible text chat gateway. See api.md for provider capability boundaries and streaming semantics.
+  license:
+    name: MIT
+    identifier: MIT
+servers:
+  - url: http://localhost:4000
+security:
+  - gatewayKey: []
+paths:
+  /v1/models:
+    get:
+      operationId: listModels
+      summary: List permitted and configured public model aliases
+      responses:
+        '200':
+          description: Model list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [object, data]
+                properties:
+                  object: { type: string, const: list }
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, object, created, owned_by]
+                      properties:
+                        id: { type: string }
+                        object: { type: string, const: model }
+                        created: { type: integer }
+                        owned_by: { type: string, const: llmproxy }
+        '401': { $ref: '#/components/responses/OpenAiError' }
+        '429': { $ref: '#/components/responses/OpenAiError' }
+        '503': { $ref: '#/components/responses/OpenAiError' }
+  /v1/chat/completions:
+    post:
+      operationId: createChatCompletion
+      summary: Create a normal or streamed chat completion
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ChatRequest' }
+      responses:
+        '200':
+          description: Completion or SSE stream. In-stream errors have an error event and no successful DONE marker.
+          headers:
+            X-Request-Id:
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChatCompletion' }
+            text/event-stream:
+              schema: { type: string }
+        '400': { $ref: '#/components/responses/OpenAiError' }
+        '401': { $ref: '#/components/responses/OpenAiError' }
+        '403': { $ref: '#/components/responses/OpenAiError' }
+        '404': { $ref: '#/components/responses/OpenAiError' }
+        '413': { $ref: '#/components/responses/OpenAiError' }
+        '415': { $ref: '#/components/responses/OpenAiError' }
+        '429': { $ref: '#/components/responses/OpenAiError' }
+        '500': { $ref: '#/components/responses/OpenAiError' }
+        '502': { $ref: '#/components/responses/OpenAiError' }
+        '503': { $ref: '#/components/responses/OpenAiError' }
+        '504': { $ref: '#/components/responses/OpenAiError' }
+  /admin/keys:
+    get:
+      operationId: listApiKeys
+      summary: List gateway key metadata, without raw keys or hashes
+      security: [{ adminKey: [] }]
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Key metadata
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ApiKeySummary' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+    post:
+      operationId: createApiKey
+      summary: Create a gateway key and disclose its raw value once
+      security: [{ adminKey: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/KeyPolicy'
+                - type: object
+                  required: [owner]
+                  properties:
+                    owner: { type: string, minLength: 1, maxLength: 128 }
+      responses:
+        '201':
+          description: Newly created credential. Store the key securely; it cannot be recovered later.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [key, details]
+                properties:
+                  key: { type: string, pattern: '^llmp_sk_[A-Za-z0-9_-]+$' }
+                  details: { $ref: '#/components/schemas/ApiKeySummary' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+  /admin/keys/{id}:
+    put:
+      operationId: replaceApiKeyPolicy
+      summary: Replace a key policy while preserving ownership and consumption
+      security: [{ adminKey: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/KeyPolicy'
+                - type: object
+                  required: [enabled]
+                  properties:
+                    enabled: { type: boolean }
+      responses:
+        '200':
+          description: Updated metadata
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiKeySummary' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+  /admin/usage:
+    get:
+      operationId: listUsage
+      summary: List recent admitted completion records
+      security: [{ adminKey: [] }]
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - name: api_key_id
+          in: query
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Usage in descending creation order
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/UsageRecord' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+  /health:
+    get:
+      operationId: health
+      security: []
+      responses:
+        '200': { $ref: '#/components/responses/Health' }
+        '503': { $ref: '#/components/responses/Health' }
+  /health/live:
+    get:
+      operationId: liveness
+      security: []
+      responses:
+        '200': { $ref: '#/components/responses/Health' }
+  /health/ready:
+    get:
+      operationId: readiness
+      security: []
+      responses:
+        '200': { $ref: '#/components/responses/Health' }
+        '503': { $ref: '#/components/responses/Health' }
+components:
+  securitySchemes:
+    gatewayKey:
+      type: http
+      scheme: bearer
+      bearerFormat: Gateway API key
+    adminKey:
+      type: http
+      scheme: bearer
+      bearerFormat: Separate LLMPROXY_ADMIN_KEY secret
+  parameters:
+    Limit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 1000, default: 100 }
+  responses:
+    OpenAiError:
+      description: Sanitized OpenAI-compatible error
+      headers:
+        X-Request-Id:
+          schema: { type: string }
+        Retry-After:
+          description: Seconds until an RPM allowance may be available; only sent for gateway RPM denials.
+          schema: { type: integer }
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [error]
+            properties:
+              error:
+                type: object
+                required: [message, type, param, code]
+                properties:
+                  message: { type: string }
+                  type: { type: string }
+                  param: { type: [string, 'null'] }
+                  code: { type: string }
+    Problem:
+      description: RFC 7807 problem details
+      content:
+        application/problem+json:
+          schema:
+            type: object
+            properties:
+              type: { type: string }
+              title: { type: string }
+              status: { type: integer }
+              code: { type: string }
+              request_id: { type: string }
+    Health:
+      description: Local dependency health; never performs a paid LLM request
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              status: { type: string, enum: [Healthy, Degraded, Unhealthy] }
+              checks:
+                type: object
+                additionalProperties:
+                  type: object
+                  properties:
+                    status: { type: string }
+                    description: { type: [string, 'null'] }
+  schemas:
+    Message:
+      type: object
+      required: [role]
+      properties:
+        role: { type: string, enum: [system, developer, user, assistant, tool] }
+        content:
+          oneOf:
+            - type: [string, 'null']
+            - type: array
+              items:
+                type: object
+                required: [type, text]
+                properties:
+                  type: { type: string, const: text }
+                  text: { type: string }
+        name: { type: string, maxLength: 64 }
+        tool_call_id: { type: string }
+        tool_calls:
+          type: array
+          items: { $ref: '#/components/schemas/ToolCall' }
+    ToolCall:
+      type: object
+      required: [id, type, function]
+      properties:
+        id: { type: string }
+        type: { type: string, const: function }
+        function:
+          type: object
+          required: [name, arguments]
+          properties:
+            name: { type: string }
+            arguments: { type: string, description: JSON-encoded function arguments }
+        extra_content: { type: object, description: Opaque provider metadata to preserve in tool history }
+    ChatRequest:
+      type: object
+      additionalProperties: false
+      required: [model, messages]
+      properties:
+        model: { type: string, minLength: 1, maxLength: 128 }
+        messages:
+          type: array
+          minItems: 1
+          items: { $ref: '#/components/schemas/Message' }
+        stream: { type: boolean, default: false }
+        stream_options:
+          type: [object, 'null']
+          properties:
+            include_usage: { type: boolean, default: false }
+        max_tokens: { type: [integer, 'null'], minimum: 1 }
+        max_completion_tokens: { type: [integer, 'null'], minimum: 1 }
+        temperature: { type: [number, 'null'], minimum: 0, maximum: 2 }
+        top_p: { type: [number, 'null'], minimum: 0, maximum: 1 }
+        stop:
+          oneOf:
+            - type: [string, 'null']
+            - type: array
+              maxItems: 4
+              items: { type: string }
+        n: { type: [integer, 'null'], enum: [1, null] }
+        tools:
+          type: [array, 'null']
+          maxItems: 128
+          items:
+            type: object
+            required: [type, function]
+            properties:
+              type: { type: string, const: function }
+              function:
+                type: object
+                required: [name]
+                properties:
+                  name: { type: string, maxLength: 64 }
+                  description: { type: [string, 'null'] }
+                  parameters: { type: [object, 'null'] }
+                  strict: { type: [boolean, 'null'] }
+        tool_choice:
+          oneOf:
+            - type: string
+              enum: [auto, none, required]
+            - type: object
+              properties:
+                type: { type: string, const: function }
+                function:
+                  type: object
+                  properties:
+                    name: { type: string }
+            - type: 'null'
+        parallel_tool_calls: { type: [boolean, 'null'] }
+        response_format: { type: [object, 'null'] }
+        seed: { type: [integer, 'null'] }
+        user: { type: [string, 'null'] }
+    TokenUsage:
+      type: object
+      required: [prompt_tokens, completion_tokens, total_tokens]
+      properties:
+        prompt_tokens: { type: integer, minimum: 0 }
+        completion_tokens: { type: integer, minimum: 0 }
+        total_tokens: { type: integer, minimum: 0 }
+    ChatCompletion:
+      type: object
+      required: [id, object, created, model, choices, usage]
+      properties:
+        id: { type: string }
+        object: { type: string, const: chat.completion }
+        created: { type: integer }
+        model: { type: string }
+        choices:
+          type: array
+          minItems: 1
+          maxItems: 1
+          items:
+            type: object
+            required: [index, message, finish_reason]
+            properties:
+              index: { type: integer, const: 0 }
+              message: { $ref: '#/components/schemas/Message' }
+              finish_reason: { type: string }
+        usage: { $ref: '#/components/schemas/TokenUsage' }
+    KeyPolicy:
+      type: object
+      required: [allowed_models]
+      properties:
+        allowed_models:
+          type: array
+          minItems: 1
+          items: { type: string }
+        requests_per_minute: { type: integer, minimum: 1, maximum: 1000000, default: 60 }
+        token_limit: { type: [integer, 'null'], minimum: 0 }
+        spending_budget: { type: [number, 'null'], minimum: 0, maximum: 1000000 }
+    ApiKeySummary:
+      allOf:
+        - $ref: '#/components/schemas/KeyPolicy'
+        - type: object
+          properties:
+            id: { type: string, format: uuid }
+            prefix: { type: string }
+            owner: { type: string }
+            enabled: { type: boolean }
+            used_tokens: { type: integer }
+            reserved_tokens: { type: integer }
+            spent: { type: number }
+            reserved_cost: { type: number }
+            created_at: { type: string, format: date-time }
+            updated_at: { type: string, format: date-time }
+            last_used_at: { type: [string, 'null'], format: date-time }
+    UsageRecord:
+      type: object
+      properties:
+        request_id: { type: string, format: uuid }
+        api_key_id: { type: string, format: uuid }
+        model: { type: string }
+        provider: { type: string }
+        input_tokens: { type: integer }
+        output_tokens: { type: integer }
+        total_tokens: { type: integer }
+        latency_ms: { type: integer }
+        status: { type: string, enum: [success, error, cancelled, abandoned] }
+        error_code: { type: [string, 'null'] }
+        estimated_cost: { type: number }
+        usage_estimated: { type: boolean }
+        created_at: { type: string, format: date-time }
