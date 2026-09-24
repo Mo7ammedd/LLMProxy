@@ -28,7 +28,8 @@ def wait_ready(base, seconds=90):
             with urllib.request.urlopen(base + "/health/ready", timeout=3) as response:
                 if response.status == 200:
                     return
-        except (urllib.error.URLError, TimeoutError):
+        except (urllib.error.URLError, TimeoutError, ConnectionError):
+            # A restarting container can accept TCP before its HTTP listener is ready.
             pass
         time.sleep(0.5)
     raise AssertionError("Gateway did not become ready before the smoke-test deadline.")
