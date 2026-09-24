@@ -28,6 +28,12 @@ public sealed class RuntimeConfigurationService(IConfiguration configuration, Ru
         {
             if (reloadSources && configuration is IConfigurationRoot root) root.Reload();
             var revision = await store.RevisionAsync(cancellationToken);
+            if (!reloadSources && revision == _revision)
+            {
+                // A concurrent request may already have applied this revision while we waited.
+                var current = catalog.Current;
+                return new(_generation, current.Registry.Models.Count, current.Providers.Count);
+            }
             var gateway = configuration.GetSection("LLMProxy").Get<GatewayOptions>() ?? new();
             var options = ProviderAccounts.Read(configuration);
             ApplyKeys(options, await store.ListProviderKeysAsync(cancellationToken), protector);
