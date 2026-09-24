@@ -1,0 +1,17 @@
+.git
+.github
+**/bin
+**/obj
+**/node_modules
+**/.venv
+**/__pycache__
+**/TestResults
+artifacts
+.env
+.env.*
+**/*.db*
+data
+secrets
+**/*.pfx
+**/*.pem
+**/*.key
