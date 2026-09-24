@@ -15,8 +15,11 @@ public static class ServiceCollectionExtensions
     {
         var options = ProviderAccounts.Read(configuration);
         services.AddSingleton(options);
+        services.TryAddSingleton<IProviderPoolState>(sp => new MemoryProviderPoolState(sp.GetService<TimeProvider>() ?? TimeProvider.System));
         services.AddSingleton<ProviderHttpTransport>();
         services.ConfigureHttpClientDefaults(client => ConfigureProviderClient(client, options.Resilience));
+        foreach (var name in BuiltInAndAccountNames(options))
+            services.AddHttpClient("llmproxy-check." + name).WithoutProviderRetries();
         foreach (var name in ProviderAccounts.BuiltIns)
         {
             services.AddHttpClient("llmproxy." + name);
@@ -27,10 +30,18 @@ public static class ServiceCollectionExtensions
         {
             services.AddHttpClient("llmproxy." + name);
             services.AddSingleton<ILlmProvider>(sp => ProviderAccounts.CreateAccount(name, account,
-                sp.GetRequiredService<IHttpClientFactory>(), sp.GetService<TokenCredential>(), sp.GetService<TimeProvider>()));
+                sp.GetRequiredService<IHttpClientFactory>(), sp.GetService<TokenCredential>(), sp.GetService<TimeProvider>(),
+                sp.GetRequiredService<IProviderPoolState>()));
         }
         return services;
     }
+
+    private static IEnumerable<string> BuiltInAndAccountNames(ProviderOptions options) => ProviderAccounts.BuiltIns.Concat(options.Accounts.Keys);
+
+    public static IHttpClientBuilder WithoutProviderRetries(this IHttpClientBuilder client) => client.ConfigureAdditionalHttpMessageHandlers((handlers, _) =>
+    {
+        foreach (var handler in handlers.OfType<ResilienceHandler>().ToArray()) handlers.Remove(handler);
+    });
 
     public static IHttpClientBuilder AddProviderHttpClient(this IServiceCollection services, string name, HttpResilienceOptions options)
         => ConfigureProviderClient(services.AddHttpClient("llmproxy." + name), options);

@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: LLMProxy
-  version: 0.2.0
+  version: 0.3.0
   description: OpenAI-compatible inference gateway with capability routing, local operator roles, accounting, reports and durable batches. See api.md and expanded-api.md for compatibility boundaries.
   license:
     name: MIT
@@ -1000,6 +1000,200 @@ paths:
                             type: string
         default:
           $ref: '#/components/responses/Problem'
+  /admin/providers:
+    get:
+      operationId: listProviders
+      summary: List provider keys, cooldowns and the last 24 hours of usage
+      security:
+      - adminKey: []
+      x-required-roles: &id002
+      - administrator
+      - operator
+      - auditor
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ProviderSummary'
+        default:
+          $ref: '#/components/responses/Problem'
+  /admin/providers/{provider}/keys:
+    post:
+      operationId: addProviderKey
+      summary: Store an encrypted upstream API key
+      security:
+      - adminKey: []
+      x-required-roles: &id001
+      - administrator
+      description: Requires a configured encryption key. Adds to the configured pool, up to 64 keys including disabled
+        credentials. Duplicate keys return 409. Changes propagate across replicas.
+      parameters:
+      - name: provider
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddProviderKey'
+      responses:
+        '204':
+          description: Successful response
+        default:
+          $ref: '#/components/responses/Problem'
+  /admin/providers/{provider}/keys/{keyId}:
+    put:
+      operationId: updateProviderKey
+      summary: Enable, disable or label a provider credential
+      security:
+      - adminKey: []
+      x-required-roles: *id001
+      parameters:
+      - name: provider
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: keyId
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: ^key_[0-9a-f]{32}$
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProviderKey'
+      responses:
+        '204':
+          description: Successful response
+        default:
+          $ref: '#/components/responses/Problem'
+  /admin/providers/{provider}/check:
+    post:
+      operationId: checkProviderAccess
+      summary: Optionally check credential and model access
+      security:
+      - adminKey: []
+      x-required-roles: *id001
+      description: Disabled by default; returns 409 until LiveChecksEnabled is configured. Limited to two checks
+        per minute per account. Empty object discovers models. A configured upstream model triggers a small generation
+        call for each enabled key and may incur provider charges. No production cooldown changes or gateway quota
+        accounting.
+      parameters:
+      - name: provider
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProviderCheckRequest'
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ProviderCheckResult'
+        default:
+          $ref: '#/components/responses/Problem'
+  /admin/alerts:
+    get:
+      operationId: listAlerts
+      summary: List durable operational incidents
+      security:
+      - adminKey: []
+      x-required-roles: *id002
+      parameters:
+      - name: resolved
+        in: query
+        required: false
+        schema:
+          type: boolean
+          default: false
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          default: 100
+          minimum: 1
+          maximum: 1000
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/OperationalAlert'
+        default:
+          $ref: '#/components/responses/Problem'
+  /admin/alerts/settings:
+    get:
+      operationId: alertSettings
+      summary: Read alert thresholds without webhook credentials
+      security:
+      - adminKey: []
+      x-required-roles: *id002
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertSettings'
+        default:
+          $ref: '#/components/responses/Problem'
+  /admin/alerts/evaluate:
+    post:
+      operationId: evaluateAlerts
+      summary: Evaluate alert conditions without sending webhooks
+      security:
+      - adminKey: []
+      x-required-roles: *id001
+      responses:
+        '204':
+          description: Successful response
+        default:
+          $ref: '#/components/responses/Problem'
+  /admin/alerts/{id}/acknowledge:
+    post:
+      operationId: acknowledgeAlert
+      summary: Acknowledge an incident and suppress pending delivery
+      security:
+      - adminKey: []
+      x-required-roles:
+      - administrator
+      - operator
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '204':
+          description: Successful response
+        default:
+          $ref: '#/components/responses/Problem'
 components:
   securitySchemes:
     gatewayKey:
@@ -1072,6 +1266,187 @@ components:
                     status: { type: string }
                     description: { type: [string, 'null'] }
   schemas:
+    AddProviderKey:
+      type: object
+      properties:
+        key:
+          type: string
+          minLength: 1
+          maxLength: 8192
+          writeOnly: true
+        label:
+          type: string
+          maxLength: 128
+          default: ''
+      required:
+      - key
+    UpdateProviderKey:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+        label:
+          type: string
+          maxLength: 128
+          default: ''
+      required:
+      - enabled
+    ProviderKeySummary:
+      type: object
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+        source:
+          type: string
+          enum:
+          - configuration
+          - managed
+        enabled:
+          type: boolean
+        cooldown_until:
+          type: string
+          format: date-time
+        attempts:
+          type: integer
+          format: int64
+        failures:
+          type: integer
+          format: int64
+        input_tokens:
+          type: integer
+          format: int64
+        output_tokens:
+          type: integer
+          format: int64
+        cost:
+          type: number
+        average_latency_ms:
+          type: number
+    ProviderSummary:
+      type: object
+      properties:
+        name:
+          type: string
+        adapter:
+          type: string
+        endpoint:
+          type: string
+        configured:
+          type: boolean
+        key_management_available:
+          type: boolean
+        live_checks_enabled:
+          type: boolean
+        cooldown_seconds:
+          type: integer
+          format: int64
+        keys:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProviderKeySummary'
+    ProviderCheckRequest:
+      type: object
+      properties:
+        model:
+          type:
+          - string
+          - 'null'
+          description: Optional configured upstream model; omission selects model discovery.
+    ProviderCheckResult:
+      type: object
+      properties:
+        key_id:
+          type: string
+        success:
+          type: boolean
+        code:
+          type: string
+        http_status:
+          type: integer
+        latency_ms:
+          type: integer
+          format: int64
+        models:
+          type: array
+          items:
+            type: string
+    AlertSettings:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+        evaluation_seconds:
+          type: integer
+          format: int64
+        window_minutes:
+          type: integer
+          format: int64
+        minimum_attempts:
+          type: integer
+          format: int64
+        budget_percent:
+          type: number
+        error_percent:
+          type: number
+        average_latency_ms:
+          type: number
+        webhook_configured:
+          type: boolean
+    OperationalAlert:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        fingerprint:
+          type: string
+        kind:
+          type: string
+          enum:
+          - budget
+          - error_spike
+          - high_latency
+          - pool_exhausted
+        resource:
+          type: string
+        severity:
+          type: string
+          enum:
+          - warning
+          - critical
+        message:
+          type: string
+        started_at:
+          type: string
+          format: date-time
+        last_seen_at:
+          type: string
+          format: date-time
+        resolved_at:
+          type: string
+          format: date-time
+        acknowledged_at:
+          type: string
+          format: date-time
+        acknowledged_by:
+          type: string
+        occurrences:
+          type: integer
+          format: int64
+        delivered_at:
+          type: string
+          format: date-time
+        delivery_lease_until:
+          type: string
+          format: date-time
+        delivery_attempts:
+          type: integer
+          format: int64
+        next_delivery_at:
+          type: string
+          format: date-time
     Message:
       type: object
       required: [role]

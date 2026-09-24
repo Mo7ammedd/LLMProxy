@@ -4,7 +4,7 @@ using Microsoft.EntityFrameworkCore;
 namespace LLMProxy.Infrastructure.Persistence;
 
 public sealed partial class EfGatewayStore(IDbContextFactory<GatewayDbContext> factory, TimeProvider? time = null)
-    : IGatewayStore, IKeyLifecycleStore, IManagementStore, IBatchStore
+    : IGatewayStore, IKeyLifecycleStore, IManagementStore, IBatchStore, IProviderOperationsStore, IAlertStore
 {
     public async Task<ApiKey?> FindKeyByIdAsync(Guid id, CancellationToken cancellationToken)
     {

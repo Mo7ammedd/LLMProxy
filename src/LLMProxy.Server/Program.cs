@@ -1,5 +1,6 @@
 using LLMProxy.Api;
 using LLMProxy.Application;
+using LLMProxy.Domain;
 using LLMProxy.Infrastructure;
 using LLMProxy.Providers;
 using LLMProxy.Server;
@@ -31,6 +32,15 @@ builder.Services.AddLlmProxyInfrastructure(builder.Configuration);
 builder.Services.AddLlmProxyProviders(builder.Configuration);
 builder.Services.AddLlmProxyApi(apiOptions);
 builder.Services.AddSingleton<IRuntimeConfiguration, RuntimeConfigurationService>();
+builder.Services.AddSingleton<IProviderOperations, ProviderOperationsService>();
+builder.Services.AddHostedService<ProviderKeyRefreshWorker>();
+builder.Services.AddHealthChecks().AddCheck<ProviderKeyConfigurationHealthCheck>("provider_keys", tags: ["ready"], timeout: TimeSpan.FromSeconds(5));
+var alertOptions = builder.Configuration.GetSection("LLMProxy:Alerts").Get<AlertOptions>() ?? new();
+alertOptions.Validate();
+builder.Services.AddSingleton(alertOptions);
+builder.Services.AddSingleton<AlertService>();
+builder.Services.AddHttpClient("llmproxy-alerts").WithoutProviderRetries();
+builder.Services.AddHostedService<AlertWorker>();
 builder.Services.AddHostedService<BatchWorker>();
 
 var exportOtlp = !string.IsNullOrWhiteSpace(builder.Configuration["OTEL_EXPORTER_OTLP_ENDPOINT"]);
@@ -59,6 +69,7 @@ try
     app.Services.GetRequiredService<ModelRouter>();
     await app.Services.GetRequiredService<StorageInitializer>().InitializeAsync(args is ["migrate"], CancellationToken.None);
     if (commandMode) return await ServerCommands.RunAsync(args, app.Services);
+    await app.Services.GetRequiredService<IRuntimeConfiguration>().RefreshProviderKeysAsync(CancellationToken.None);
     app.UseLlmProxyApi();
     await app.RunAsync();
     return 0;

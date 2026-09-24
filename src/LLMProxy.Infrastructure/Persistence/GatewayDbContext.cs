@@ -21,9 +21,35 @@ public abstract class GatewayDbContext(DbContextOptions options) : DbContext(opt
     public DbSet<GatewayFile> Files => Set<GatewayFile>();
     public DbSet<BatchJob> Batches => Set<BatchJob>();
     public DbSet<BatchItem> BatchItems => Set<BatchItem>();
+    public DbSet<StoredProviderKey> ProviderKeys => Set<StoredProviderKey>();
+    public DbSet<OperationsRevision> OperationsRevisions => Set<OperationsRevision>();
+    public DbSet<OperationalAlert> Alerts => Set<OperationalAlert>();
+    public DbSet<AlertEvaluationLock> AlertLocks => Set<AlertEvaluationLock>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
+        var providerKeys = builder.Entity<StoredProviderKey>();
+        providerKeys.ToTable("provider_keys").HasKey(x => new { x.Provider, x.KeyId });
+        providerKeys.Property(x => x.Provider).HasMaxLength(64);
+        providerKeys.Property(x => x.KeyId).HasMaxLength(36);
+        providerKeys.Property(x => x.Label).HasMaxLength(128);
+        providerKeys.Property(x => x.Ciphertext).HasMaxLength(12000);
+        var revision = builder.Entity<OperationsRevision>();
+        revision.ToTable("operations_revision").HasKey(x => x.Id);
+        revision.HasData(new OperationsRevision { Id = 1, Version = 0 });
+        var alerts = builder.Entity<OperationalAlert>();
+        alerts.ToTable("operational_alerts").HasKey(x => x.Id);
+        alerts.Property(x => x.Fingerprint).HasMaxLength(200);
+        alerts.HasIndex(x => x.Fingerprint).IsUnique();
+        alerts.Property(x => x.Kind).HasMaxLength(32);
+        alerts.Property(x => x.Resource).HasMaxLength(128);
+        alerts.Property(x => x.Severity).HasMaxLength(16);
+        alerts.Property(x => x.Message).HasMaxLength(512);
+        alerts.Property(x => x.AcknowledgedBy).HasMaxLength(160);
+        alerts.HasIndex(x => new { x.ResolvedAt, x.StartedAt });
+        var alertLock = builder.Entity<AlertEvaluationLock>();
+        alertLock.ToTable("alert_evaluation_lock").HasKey(x => x.Id);
+        alertLock.HasData(new AlertEvaluationLock { Id = 1 });
         var keys = builder.Entity<ApiKey>();
         keys.ToTable("api_keys");
         keys.HasKey(x => x.Id);
@@ -103,6 +129,7 @@ public abstract class GatewayDbContext(DbContextOptions options) : DbContext(opt
         attempts.Property(x => x.EstimatedCost).HasPrecision(20, 9);
         attempts.Property(x => x.ActualCost).HasPrecision(20, 9);
         attempts.HasIndex(x => new { x.RequestId, x.CreatedAt });
+        attempts.HasIndex(x => new { x.CreatedAt, x.Provider, x.ProviderKeyId });
         var reconciliation = builder.Entity<ReconciliationRecord>();
         reconciliation.ToTable("billing_reconciliations").HasKey(x => x.Reference);
         reconciliation.Property(x => x.Reference).HasMaxLength(128);

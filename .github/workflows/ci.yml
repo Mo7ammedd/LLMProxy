@@ -20,7 +20,7 @@ jobs:
     timeout-minutes: 15
     services:
       postgres:
-        image: postgres:16-alpine
+        image: postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
         env:
           POSTGRES_PASSWORD: llmproxy_ci_fixture_password
         ports: ['5432:5432']
@@ -28,7 +28,7 @@ jobs:
           --health-cmd "pg_isready -U postgres"
           --health-interval 5s --health-timeout 3s --health-retries 20
       redis:
-        image: redis:7-alpine
+        image: redis:7-alpine@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499
         ports: ['6379:6379']
         options: >-
           --health-cmd "redis-cli ping"
@@ -37,8 +37,8 @@ jobs:
       LLMPROXY_TEST_POSTGRES: Host=127.0.0.1;Database=postgres;Username=postgres;Password=llmproxy_ci_fixture_password
       LLMPROXY_TEST_REDIS: 127.0.0.1:6379,abortConnect=false
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-dotnet@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
         with:
           dotnet-version: '10.0.x'
           cache: true
@@ -52,6 +52,7 @@ jobs:
           version = ET.parse("Directory.Build.props").findtext(".//Version")
           assert os.environ["GITHUB_REF_NAME"] == f"v{version}", "Release tag must match Directory.Build.props Version"
           PY
+      - run: python3 -m unittest discover -s scripts/tests
       - run: dotnet restore --locked-mode
       - run: dotnet format --verify-no-changes --no-restore
       - run: dotnet build --configuration Release --no-restore
@@ -68,12 +69,12 @@ jobs:
           PGUSER: postgres
           PGPASSWORD: llmproxy_ci_fixture_password
         run: python3 scripts/recovery_drill.py --duration 60 --long-stream-seconds 30
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: test-results
           path: artifacts/test-results
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: recovery-drill
@@ -84,23 +85,23 @@ jobs:
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-dotnet@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
         with:
           dotnet-version: '10.0.x'
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '24'
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.12'
       - run: pip install -r examples/python/requirements.txt
       - run: npm ci --prefix examples/typescript --ignore-scripts
       - run: dotnet restore examples/csharp --locked-mode
       - run: dotnet build examples/csharp --configuration Release --no-restore
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
       - name: Build ARM64 runtime image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           platforms: linux/arm64
@@ -108,14 +109,33 @@ jobs:
           tags: llmproxy:smoke
       - name: Run container and SDK checks on ARM64
         run: python scripts/docker_smoke.py
+      - run: mkdir -p artifacts/security
+      - name: Scan native arm64 image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: v0.74.0
+          image-ref: llmproxy:smoke
+          scanners: vuln
+          format: json
+          output: artifacts/security/scan-arm64.json
+          exit-code: '0'
+          timeout: 10m
+      - name: Enforce vulnerability policy
+        run: python3 scripts/check_vulnerabilities.py artifacts/security/scan-arm64.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: security-native-arm64
+          path: artifacts/security/scan-arm64.json
 
   image:
     needs: [verify, runtime-arm64]
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     permissions:
       contents: read
       packages: write
+      id-token: write
     outputs:
       digest: ${{ steps.publish.outputs.digest }}
     steps:
@@ -129,16 +149,16 @@ jobs:
             echo "::error::Set the DOCKERHUB_USERNAME repository variable and DOCKERHUB_TOKEN Actions secret."
             exit 1
           fi
-      - uses: actions/checkout@v5
-      - uses: actions/setup-dotnet@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
         with:
           dotnet-version: '10.0.x'
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '24'
           cache: npm
           cache-dependency-path: examples/typescript/package-lock.json
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.12'
           cache: pip
@@ -151,9 +171,9 @@ jobs:
       - run: dotnet build src/LLMProxy.Server --configuration Release --no-restore
       - name: Source and extended OpenAI SDK compatibility
         run: python scripts/source_smoke.py
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
       - name: Build test image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           load: true
@@ -162,10 +182,28 @@ jobs:
           cache-to: type=gha,mode=max
       - name: Docker and OpenAI SDK integration tests
         run: python scripts/docker_smoke.py
+      - run: mkdir -p artifacts/security
+      - name: Scan native amd64 image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: v0.74.0
+          image-ref: llmproxy:smoke
+          scanners: vuln
+          format: json
+          output: artifacts/security/scan-amd64.json
+          exit-code: '0'
+          timeout: 10m
+      - name: Enforce vulnerability policy
+        run: python3 scripts/check_vulnerabilities.py artifacts/security/scan-amd64.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: security-native-amd64
+          path: artifacts/security/scan-amd64.json
       - name: Normalize image name
         id: image
         run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
-      - uses: docker/metadata-action@v5
+      - uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         id: metadata
         with:
           images: ${{ steps.image.outputs.name }}
@@ -177,7 +215,7 @@ jobs:
             type=sha,prefix=sha-
       - name: Docker Hub image tags
         if: github.event_name != 'pull_request'
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         id: dockerhub-metadata
         with:
           images: ${{ vars.DOCKERHUB_USERNAME }}/llmproxy
@@ -187,7 +225,7 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}},enable=${{ !contains(github.ref_name, '-') }}
             type=sha,prefix=sha-
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         if: github.event_name != 'pull_request'
         with:
           registry: ghcr.io
@@ -195,18 +233,20 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Authenticate to Docker Hub
         if: github.event_name != 'pull_request'
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           username: ${{ vars.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
       - name: Publish verified image
         if: github.event_name != 'pull_request'
         id: publish
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           push: true
           platforms: linux/amd64,linux/arm64
+          provenance: mode=max
+          attests: type=sbom,generator=docker/buildkit-syft-scanner:stable-1@sha256:ae4f3b554449e7e25548e7d8ccc029d17357348e30c6e3df01b92bc93654d6a9
           tags: |
             ${{ steps.metadata.outputs.tags }}
             ${{ steps.dockerhub-metadata.outputs.tags }}
@@ -236,6 +276,23 @@ jobs:
               for variable in ("DOCKERHUB_IMAGE", "GHCR_IMAGE"):
                   summary.write(f"- `{os.environ[variable]}@{expected}`\n")
           PY
+      - name: Install Cosign
+        if: github.event_name != 'pull_request'
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.1.3
+      - name: Scan, sign and verify published digests
+        if: github.event_name != 'pull_request'
+        env:
+          IMAGE_DIGEST: ${{ steps.publish.outputs.digest }}
+          GHCR_IMAGE: ${{ steps.image.outputs.name }}
+          DOCKERHUB_IMAGE: ${{ vars.DOCKERHUB_USERNAME }}/llmproxy
+        run: bash scripts/release_evidence.sh
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: github.event_name != 'pull_request' && always()
+        with:
+          name: security-release
+          path: artifacts/security/
       - name: Synchronize Docker Hub overview
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         env:
@@ -250,6 +307,10 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: security-release
+          path: artifacts/security
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -264,13 +325,15 @@ jobs:
           if [[ "$GITHUB_REF_NAME" == *-* ]]; then release_flags+=(--prerelease); fi
           release_version="${GITHUB_REF_NAME#v}"
           cat > release-notes.md <<EOF
-          Linux AMD64 and ARM64 images passed the gateway, database, recovery and native container/SDK checks.
+          Linux AMD64 and ARM64 images passed gateway, database, recovery, native container/SDK and vulnerability checks. Both registry digests have verified Sigstore signatures and scan attestations; SPDX SBOMs, build provenance and full scan reports are attached.
 
           - Docker Hub: \`$DOCKERHUB_USERNAME/llmproxy:$release_version\`
           - GHCR: \`ghcr.io/${GITHUB_REPOSITORY,,}:$GITHUB_REF_NAME\`
           - Verified image digest in both registries: \`$IMAGE_DIGEST\`
 
+          [Signature verification and scan policy](https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_REF_NAME/docs/releases.md#signatures-sboms-and-vulnerability-policy)
+
           [Changelog and upgrade notes](https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_REF_NAME/CHANGELOG.md) · [Deployment documentation](https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_REF_NAME/README.md)
           EOF
           gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag \
-            --title "LLMProxy $GITHUB_REF_NAME" --notes-file release-notes.md --generate-notes "${release_flags[@]}"
+            --title "LLMProxy $GITHUB_REF_NAME" --notes-file release-notes.md --generate-notes "${release_flags[@]}" artifacts/security/*

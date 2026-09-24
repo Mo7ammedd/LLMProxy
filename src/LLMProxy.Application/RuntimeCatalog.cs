@@ -8,6 +8,7 @@ public sealed record ConfigurationReloadResult(long Generation, int Models, int 
 public interface IRuntimeConfiguration
 {
     Task<ConfigurationReloadResult> ReloadAsync(CancellationToken cancellationToken);
+    Task RefreshProviderKeysAsync(CancellationToken cancellationToken);
 }
 
 public sealed class RuntimeCatalog(CatalogSnapshot initial) : IModelRegistry, IModelPricing, IProviderCatalog

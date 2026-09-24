@@ -91,15 +91,17 @@ Compose does not forward arbitrary `.env` entries. Add the indexed variables to 
 
 With no list, the existing `ApiKey` and flat credential aliases work as before. With a nonempty list, only its entries are used; the single key is not appended. Empty, duplicate, whitespace-containing or over-8-KiB keys and lists over 64 entries fail startup/reload validation. Entra-authenticated Foundry continues to use identity tokens, and keyless Ollama continues to work.
 
-Requests rotate through keys in round-robin order. All aliases and supported operations for that provider share the pool, including chat, embeddings, Responses, streaming and batch items. Keys share the endpoint, model mappings, prices and provider/account concurrency limit. Use named accounts when endpoints, prices or concurrency scopes must differ. Key rotation and cooldown state are local to each process.
+Requests rotate through keys in round-robin order. All aliases and supported operations for that provider share the pool, including chat, embeddings, Responses, streaming and batch items. Keys share the endpoint, model mappings, prices and provider/account concurrency limit. Use named accounts when endpoints, prices or concurrency scopes must differ. Key rotation and cooldown state use Redis in PostgreSQL mode and memory in standalone mode. Redis keys include the actual provider account name; different accounts stay isolated even when they share a credential.
 
 When multiple keys are configured, HTTP 401/403 and 429 responses move to another available key. A 429 switches keys immediately rather than waiting through retries on the rate-limited key. These failures cool the affected key for `ApiKeyCooldownSeconds` (default 30; range 0–3600), or a longer upstream `Retry-After`, capped at 24 hours. Zero disables the default cooldown while still honoring `Retry-After`. Later requests with every key cooling down return `provider_keys_unavailable` (503) with `Retry-After`, or use another provider when model fallback is enabled.
 
 Connection errors, timeouts and HTTP 408/5xx retain bounded HTTP retries before trying another key. Each eligible key is visited at most once per gateway call, with HTTP retry attempts bounded by `Providers:Resilience:RetryCount`; the application request deadline covers the entire pool and provider fallback. Each key has a separate circuit breaker. HTTP 400/422 errors are not replayed across keys. Once a successful HTTP response opens, that response/stream stays on its selected key. Pool failover is independent of the model's `EnableFallback`, which controls switching providers.
 
-Explicit configuration reload validates and replaces the pool for new requests while in-flight work keeps its selected credentials. Reload each replica separately. HTTP attempts expose a `provider_key_id` fingerprint for billing/debugging; raw credentials are never returned or persisted in usage records. See [attempt reporting](expanded-api.md#reports-and-reconciliation).
+Explicit configuration reload validates and replaces credentials for new requests while preserving rotation/cooldown state. In-flight work keeps its captured credentials. Reload file/environment configuration on each replica; dashboard-managed key additions and enable/disable changes propagate automatically. HTTP attempts expose a `provider_key_id` fingerprint for billing/debugging; raw credentials are never returned or persisted in usage records. See [attempt reporting](expanded-api.md#reports-and-reconciliation).
 
-### Named provider accounts
+#See [provider operations](provider-operations.md) for encrypted dashboard-managed keys, opt-in access checks and the full alert configuration reference.
+
+## Named provider accounts
 
 Add accounts under `LLMProxy:Providers:Accounts`. Each account has `Adapter`, `BaseUrl`, `ApiKey` or `ApiKeys`, `ApiKeyCooldownSeconds` and `AllowInsecureHttp`; Azure accounts also accept `ApiVersion`, and Foundry accounts accept `Authentication` and `TokenScope`. Names contain 1–64 ASCII letters, digits, hyphens or underscores and cannot equal a built-in provider ID. Use the account name in model mappings and prices:
 
@@ -245,14 +247,14 @@ To edit arrays, remove default aliases or change an entire routing layout, mount
 You can extract the built-in file without cloning source:
 
 ```bash
-docker create --name llmproxy-config mohammedtv/llmproxy:0.2.0
+docker create --name llmproxy-config mohammedtv/llmproxy:0.3.0
 docker cp llmproxy-config:/app/appsettings.json ./appsettings.json
 docker rm llmproxy-config
 # Edit the local file, preserving Logging and relevant Pricing entries.
 docker run -d --name llmproxy -p 4000:4000 --env-file .env \
   -v llmproxy-data:/data \
   -v "$PWD/appsettings.json:/app/appsettings.json:ro" \
-  mohammedtv/llmproxy:0.2.0
+  mohammedtv/llmproxy:0.3.0
 ```
 
 For Compose, put the mount in a local `compose.override.yml`. Credentials should remain in the environment or a secure configuration source, not in the replacement JSON.
@@ -263,4 +265,4 @@ For Compose, put the mount in a local `compose.override.yml`. Credentials should
 
 The Compose file consumes `POSTGRES_PASSWORD`, `REDIS_PASSWORD`, `LLMPROXY_IMAGE`, `LLMPROXY_PORT` (host port) and `LLMPROXY_AUTO_MIGRATE`. These are Compose inputs, not additional server option aliases. It forwards the provider/bootstrap/admin/OTLP endpoint variables from `.env`; pass other server settings explicitly through a Compose override.
 
-`LLMPROXY_IMAGE` defaults to the public `mohammedtv/llmproxy:0.2.0` image. Use a full version or digest to pin a deployment; `latest` follows successful main builds and stable releases. See [image tags and release verification](releases.md).
+`LLMPROXY_IMAGE` defaults to the public `mohammedtv/llmproxy:0.3.0` image. Use a full version or digest to pin a deployment; `latest` follows successful main builds and stable releases. See [image tags and release verification](releases.md).

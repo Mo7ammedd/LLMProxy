@@ -17,7 +17,8 @@ PROVIDER_NAMES = ("openai", "foundry", "mistral", "cohere", "deepseek", "groq", 
 def isolated_environment():
     """Do not inherit real provider credentials, endpoints or identity settings."""
     prefixes = ("OPENAI_", "ANTHROPIC_", "GEMINI_", "AZURE_", "FOUNDRY_", "MISTRAL_",
-                "COHERE_", "DEEPSEEK_", "GROQ_", "OLLAMA_", "LLMPROXY__PROVIDERS__")
+                "COHERE_", "DEEPSEEK_", "GROQ_", "OLLAMA_", "LLMPROXY__PROVIDERS__",
+                "LLMPROXY_PROVIDER_KEY_ENCRYPTION_KEY", "LLMPROXY__OPERATIONS__", "LLMPROXY__ALERTS__")
     return {key: value for key, value in os.environ.items() if not key.upper().startswith(prefixes)}
 
 
@@ -38,12 +39,47 @@ def provider_environment(provider, mock_base):
     return settings
 
 
-def request(base, path, data=None, key=KEY):
+def request(base, path, data=None, key=KEY, method=None):
     headers = {"Authorization": f"Bearer {key}"}
     if data is not None:
         headers["Content-Type"] = "application/json"
-    req = urllib.request.Request(base + path, data=None if data is None else json.dumps(data).encode(), headers=headers)
+    req = urllib.request.Request(base + path, data=None if data is None else json.dumps(data).encode(), headers=headers, method=method)
     return urllib.request.urlopen(req, timeout=15)
+
+
+def check_provider_operations(base):
+    """Exercise encrypted key storage, live discovery and durable incidents against the mock."""
+    fixture_key = "operations-smoke-fixture-not-a-live-key"
+    with request(base, "/admin/providers", key=ADMIN_KEY) as response:
+        original = next(provider for provider in json.load(response) if provider["name"] == "openai")
+    original_ids = [key["id"] for key in original["keys"]]
+    with request(base, "/admin/providers/openai/keys", {"key": fixture_key, "label": "smoke"}, ADMIN_KEY) as response:
+        assert response.status == 204
+    with request(base, "/admin/providers", key=ADMIN_KEY) as response:
+        raw = response.read().decode()
+        assert fixture_key not in raw
+        provider = next(provider for provider in json.loads(raw) if provider["name"] == "openai")
+    try:
+        for key in provider["keys"]:
+            with request(base, f"/admin/providers/openai/keys/{key['id']}", {"enabled": False}, ADMIN_KEY, "PUT"):
+                pass
+        with request(base, "/admin/alerts/evaluate", {}, ADMIN_KEY):
+            pass
+        with request(base, "/admin/alerts", key=ADMIN_KEY) as response:
+            incident = next(alert for alert in json.load(response) if alert["kind"] == "pool_exhausted" and alert["resource"] == "openai")
+        with request(base, f"/admin/alerts/{incident['id']}/acknowledge", {}, ADMIN_KEY):
+            pass
+    finally:
+        for key in provider["keys"]:
+            with request(base, f"/admin/providers/openai/keys/{key['id']}", {"enabled": key["id"] in original_ids}, ADMIN_KEY, "PUT"):
+                pass
+    with request(base, "/admin/alerts/evaluate", {}, ADMIN_KEY):
+        pass
+    with request(base, "/admin/alerts?resolved=true", key=ADMIN_KEY) as response:
+        assert any(alert["kind"] == "pool_exhausted" and alert.get("resolved_at") for alert in json.load(response))
+    with request(base, "/admin/providers/openai/check", {}, ADMIN_KEY) as response:
+        assert all(check["success"] for check in json.load(response))
+    print("Provider key storage, enable/disable, discovery and alert lifecycle passed against the mock.", flush=True)
 
 
 def wait_ready(base, seconds=90):

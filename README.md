@@ -7,7 +7,7 @@
 
 LLMProxy is an MIT-licensed, self-hosted LLM gateway built with C# and .NET 10. Applications connect through OpenAI-compatible HTTP APIs at `http://localhost:4000/v1`, authenticate with gateway keys and select public model aliases. The gateway owns upstream credentials, routing, concurrency, quota enforcement and usage accounting.
 
-Version **0.2.0** is available on [Docker Hub](https://hub.docker.com/r/mohammedtv/llmproxy) as `mohammedtv/llmproxy:0.2.0` for `linux/amd64` and `linux/arm64`. This README documents that version's gateway features. PostgreSQL plus Redis supports multiple replicas; SQLite supports a persistent standalone deployment. See the [changelog and upgrade notes](CHANGELOG.md) and [image tags and release process](docs/releases.md) for versioned deployments and GHCR images.
+Version **0.3.0** is available on [Docker Hub](https://hub.docker.com/r/mohammedtv/llmproxy) as `mohammedtv/llmproxy:0.3.0` for `linux/amd64` and `linux/arm64`. This README documents that version's gateway features. PostgreSQL plus Redis supports multiple replicas; SQLite supports a persistent standalone deployment. See the [changelog and upgrade notes](CHANGELOG.md) and [image tags, signatures, SBOMs and release process](docs/releases.md) for versioned deployments and GHCR images.
 
 [Quick start](#quick-start-with-docker) · [Provider compatibility](#provider-compatibility) · [Multiple upstream keys](#multiple-keys-per-provider) · [SDK examples](#openai-sdk-usage) · [Administration](#gateway-keys-and-administration) · [Configuration reference](docs/configuration.md) · [OpenAPI](docs/openapi.yaml) · [Releases](https://github.com/Mo7ammedd/LLMProxy/releases)
 
@@ -24,7 +24,7 @@ Version **0.2.0** is available on [Docker Hub](https://hub.docker.com/r/mohammed
 | Billing | Configurable ordinary/cache/tier prices, individual HTTP attempts, credential fingerprints and idempotent invoice reconciliation |
 | Batch processing | Durable files and batches, database worker claims, cancellation, expiry, partial results and explicit interrupted-item outcomes |
 | Management | Embedded `/admin` dashboard, local administrator/operator/auditor roles, expiring sessions, audit, usage charts, cursor pages, filters and CSV export |
-| Operations | SQLite/PostgreSQL migrations, Redis admission controls, retention, health/readiness, graceful shutdown, OpenTelemetry, backup/recovery tools and container CI |
+| Operations | SQLite/PostgreSQL migrations, Redis admission controls, retention, health/readiness, operational alerts, graceful shutdown, OpenTelemetry, backup/recovery tools and signed/scanned container CI |
 
 The gateway implements a documented subset of the OpenAI API. Model access, feature support and upstream billing depend on your provider account and deployment. See [compatibility boundaries](#compatibility-boundaries) before integrating additional SDK methods.
 
@@ -89,14 +89,14 @@ OPENAI_API_KEY=your-provider-key
 Pull the public image and run it with standalone SQLite storage:
 
 ```bash
-docker pull mohammedtv/llmproxy:0.2.0
+docker pull mohammedtv/llmproxy:0.3.0
 docker run -d \
   --name llmproxy \
   --restart unless-stopped \
   -p 4000:4000 \
   --env-file .env \
   -v llmproxy-data:/data \
-  mohammedtv/llmproxy:0.2.0
+  mohammedtv/llmproxy:0.3.0
 
 docker exec llmproxy dotnet LLMProxy.Server.dll keys create \
   --owner my-app --models fast,reasoning,embeddings --rpm 60
@@ -127,7 +127,7 @@ gh repo clone Mo7ammedd/LLMProxy
 cd LLMProxy
 cp .env.example .env
 # Edit .env: set provider credentials and separate POSTGRES_PASSWORD / REDIS_PASSWORD values.
-# Keep LLMPROXY_IMAGE=mohammedtv/llmproxy:0.2.0 to run the published release.
+# Keep LLMPROXY_IMAGE=mohammedtv/llmproxy:0.3.0 to run the published release.
 docker compose pull
 docker compose up -d --no-build
 docker compose exec llmproxy dotnet LLMProxy.Server.dll keys create \
@@ -138,7 +138,7 @@ curl http://localhost:4000/health/ready
 
 Compose runs the gateway, PostgreSQL 16 and Redis 7 on a dedicated network. Only the gateway port is published. PostgreSQL and Redis data use named volumes; services restart automatically and dependencies have health checks. The gateway runs as a non-root user with a read-only root filesystem.
 
-The Compose file and `.env.example` default to `mohammedtv/llmproxy:0.2.0`. Set `LLMPROXY_IMAGE` to another published tag or digest to select a different build. To build the current checkout, set `LLMPROXY_IMAGE=llmproxy:local` and run `docker compose up -d --build`. To stop services while retaining data, use `docker compose down`. Adding `--volumes` deletes the persisted databases. Read the [upgrade notes](CHANGELOG.md#upgrading-from-010) before updating an existing database.
+The Compose file and `.env.example` default to `mohammedtv/llmproxy:0.3.0`. Set `LLMPROXY_IMAGE` to another published tag or digest to select a different build. To build the current checkout, set `LLMPROXY_IMAGE=llmproxy:local` and run `docker compose up -d --build`. To stop services while retaining data, use `docker compose down`. Adding `--volumes` deletes the persisted databases. Read the [upgrade notes](CHANGELOG.md#upgrading-from-020) before updating an existing database.
 
 ## Running from source
 
@@ -212,7 +212,7 @@ Set `OPENAI_POOL_KEY_1` and `OPENAI_POOL_KEY_2` in the local `.env` when using t
 
 Requests rotate among available keys. HTTP 401/403 or 429 switches to another key and cools the affected key for 30 seconds by default; a longer `Retry-After` is honored up to 24 hours. Pooled 429 responses skip same-key retries. Transient HTTP/network failures retain bounded retries before key failover. Each credential has a separate circuit; the account's concurrency limit, prices and model mappings are shared. Pools apply to every supported operation, including batch items. A successful response or stream remains on its selected key.
 
-Rotation and cooldowns are process-local. Reload replaces pools for new requests while in-flight routes keep their credentials. Attempt reports identify credentials by `provider_key_id`, a fingerprint that does not contain the raw key. [Pool behavior, limits and error codes](docs/configuration.md#multiple-api-keys).
+Rotation and cooldowns use Redis in PostgreSQL mode and local memory in standalone mode. Reload preserves rotation and existing cooldowns; in-flight routes keep their captured credentials. Attempt reports identify credentials by `provider_key_id`, a fingerprint that does not contain the raw key. [Pool behavior, limits and error codes](docs/configuration.md#multiple-api-keys).
 
 ### Named provider accounts
 
@@ -251,13 +251,13 @@ docker exec llmproxy dotnet LLMProxy.Server.dll keys disable KEY_ID
 
 `--token-limit` and `--budget` set lifetime allowances; `--monthly-token-limit` and `--monthly-budget` set UTC calendar-month allowances. `--expires-at` accepts an ISO 8601 timestamp. Omitting a limit means unlimited; zero denies requests that require it. A bootstrap key is inserted only if absent and is never re-enabled on restart.
 
-Set a separate `LLMPROXY_ADMIN_KEY`, open `http://localhost:4000/admin` and use it to create the first local administrator. After verifying that account, you can remove the shared bootstrap secret on restart. The dashboard includes usage totals/charts, reporting filters, CSV, key creation/editing/rotation, operator management, audit history and model configuration. Browser credentials stay in memory; a page refresh requires signing in again.
+Set a separate `LLMPROXY_ADMIN_KEY`, open `http://localhost:4000/admin` and use it to create the first local administrator. After verifying that account, you can remove the shared bootstrap secret on restart. The dashboard includes usage charts, reports/CSV, gateway key policies, provider key management, per-key usage/failures/cooldowns, optional access checks, operational alerts, operators, audit history and model configuration. Browser credentials stay in memory; a page refresh requires signing in again.
 
 | Local role | Permissions |
 | --- | --- |
 | `auditor` | Read keys, usage, audit and models; export reports |
 | `operator` | Auditor permissions plus create/update/rotate gateway keys |
-| `administrator` | Operator permissions plus manage operators, reconcile billing and reload configuration |
+| `administrator` | Operator permissions plus manage providers/operators, run provider checks, evaluate alerts, reconcile billing and reload configuration |
 
 Passwords use salted PBKDF2-SHA256 hashes. Local bearer sessions expire after eight hours; password/role updates revoke them. Management actions and rejected requests are audited without storing credentials or request bodies. The last enabled local administrator is protected from disabling/demotion. Roles apply gateway-wide; there is no per-owner operator isolation.
 
@@ -270,6 +270,9 @@ Passwords use salted PBKDF2-SHA256 hashes. Local bearer sessions expire after ei
 | `GET /admin/keys/page`, `GET /admin/keys/{id}/quotas` | Key metadata and monthly windows |
 | `GET /admin/usage/page`, `/admin/usage/summary`, `/admin/usage/export` | Cursor pages, aggregate reports and CSV |
 | `GET /admin/usage/{id}/attempts` | Per-HTTP-attempt status, key fingerprint, timing, usage and cost |
+| `GET /admin/providers`, `POST /admin/providers/{provider}/keys`, `PUT /admin/providers/{provider}/keys/{keyId}` | Inspect pools; add encrypted keys; enable/disable keys |
+| `POST /admin/providers/{provider}/check` | Optional credential/model access checks |
+| `GET /admin/alerts`, `GET /admin/alerts/settings`, `POST /admin/alerts/{id}/acknowledge`, `POST /admin/alerts/evaluate` | Durable incidents, settings, acknowledgment and evaluation |
 | `GET /admin/audit`, `GET /admin/models` | Audit history and model/capability configuration |
 | `POST /admin/billing/reconcile`, `POST /admin/config/reload` | Invoice adjustments and catalog reload |
 
@@ -283,6 +286,8 @@ curl 'http://localhost:4000/admin/usage/page?limit=100&model=fast' \
 curl -X POST http://localhost:4000/admin/config/reload \
   -H "Authorization: Bearer $LLMPROXY_ADMIN_KEY"
 ```
+
+For provider keys, configure `LLMPROXY_PROVIDER_KEY_ENCRYPTION_KEY` with a persistent base64-encoded 32-byte key, then use the **Providers** tab. The database stores added credentials with AES-256-GCM; APIs show fingerprints. Configured credentials remain supported and can be disabled in the dashboard. Replicas refresh managed changes automatically. The **Alerts** tab tracks budget thresholds, error spikes, high latency and exhausted pools. [Provider operations, live checks and alerts](docs/provider-operations.md) explains settings, propagation, encryption backups and webhook delivery.
 
 Policy updates replace the full policy. Rotation preserves the key ID, policies, counters and batch/file ownership; grace allows the immediately previous credential temporarily. [Administrative API examples](docs/api.md#administration) · [Roles, lifecycle and reporting](docs/expanded-api.md). Keep management endpoints on a trusted network.
 
@@ -494,7 +499,7 @@ The application deadline bounds all key retries, provider fallback and streaming
 - Configure output-token bounds and key allowances. Concurrent requests reserve quota atomically before contacting a provider.
 - Review migration and retention policies. Automatic migrations are convenient for initial deployment; larger installations can run `migrate` separately and disable `AutoMigrate` on server instances.
 
-`/health/live` checks the process. `/health` and `/health/ready` report database, Redis, provider configuration and shutdown state. Provider outages do not make the process unhealthy. A partially configured alias set is degraded but ready; unavailable aliases are not advertised. No health check calls a real LLM API.
+`/health/live` checks the process. `/health` and `/health/ready` report database, Redis, provider configuration and shutdown state. Provider outages do not make the process unhealthy. A partially configured alias set is degraded but ready; unavailable aliases are not advertised. No readiness/liveness check calls an LLM API. Administrators can separately enable and run live provider checks.
 
 Logs contain identifiers, model/provider names, status, latency and token counts, never prompts, message bodies or keys by default. Set `OTEL_EXPORTER_OTLP_ENDPOINT` to export traces and metrics. [Operations, TLS, metrics and backups](docs/operations.md).
 
@@ -506,7 +511,7 @@ The `migrate` CLI applies pending SQLite or PostgreSQL migrations without starti
 - Files exist for gateway batches. There is no general provider file upload, native provider batch API or automatic native batch discount.
 - Image generation, speech generation/transcription, video, log probabilities and legacy Completions are not exposed.
 - Operators use local identities with gateway-wide roles. OIDC/SSO, MFA and owner-scoped operator permissions are not implemented.
-- Latency measurements and upstream-key rotation/cooldowns are process-local. Model round-robin cursors and admission limits can be shared through Redis; configuration reload is per replica.
+- Latency-routing measurements remain process-local. Provider/model rotation, key cooldowns and admission limits use Redis in PostgreSQL mode. Managed key changes propagate automatically; file/environment configuration reload remains per replica.
 - Model capability and price catalogs are operator-configured. Health checks and automated provider tests do not establish access to every live model or its current price.
 
 See the [remaining roadmap](docs/roadmap.md) for follow-up work and [detailed protocol boundaries](docs/api.md#compatibility) for parameter-level differences.
@@ -523,7 +528,7 @@ See the [remaining roadmap](docs/roadmap.md) for follow-up work and [detailed pr
 
 Git tags use a `v` prefix; Docker Hub version tags omit it. Stable and prerelease tags create corresponding GitHub releases. Pull requests build and test without registry logins or image publication; ordinary feature-branch pushes do not trigger CI. Manual workflow runs can publish the selected ref, so use pull requests for validation alone. `latest` tracks successful `main` builds as well as stable releases; use a full version or digest for a pinned deployment.
 
-Version `0.2.0` on Docker Hub is pinned to the previously verified build of commit `1911fc8`. The automated Docker Hub workflow applies to subsequent builds; it does not replace that existing release image. The [release guide](docs/releases.md) records its digest, explains registry credentials and describes versioning, release notes, verification and recovery from failed publication.
+Version `0.3.0` on Docker Hub is pinned to the previously verified build of commit `1911fc8`. The automated Docker Hub workflow applies to subsequent builds; it does not replace that existing release image. The [release guide](docs/releases.md) records its digest, explains registry credentials and describes versioning, release notes, verification and recovery from failed publication.
 
 GHCR uses the repository's `GITHUB_TOKEN`; Docker Hub uses the `DOCKERHUB_USERNAME` repository variable and encrypted `DOCKERHUB_TOKEN` Actions secret. The maintained [Docker Hub overview](docs/dockerhub.md) is synchronized after successful `main` publication. Reusable NuGet packages remain a possible future distribution channel; the gateway is a standalone server today.
 
@@ -560,6 +565,6 @@ The smoke tests exercise normal and streaming chat through the Python, TypeScrip
 
 `scripts/load_probe.py` measures throughput, latency and stream first-token timing. `scripts/recovery_drill.py` runs local mock traffic through two gateway processes, kills a streaming process, recovers its orphan once, exercises Redis loss and restores a PostgreSQL backup. It needs `redis-server`, PostgreSQL client tools and a test role able to create databases. [Commands and validation limits](docs/operations.md#load-and-recovery-drills).
 
-The recorded 2026-09-24 local run passed **327 tests** with PostgreSQL and Redis enabled, including 73 tests added for provider key pools. The [verification record](docs/implementation-plan.md) also lists SDK, browser, recovery and migration checks and their environment limits. Live-provider testing and successful native container CI are separate checks.
+The v0.3 local run passed **347 .NET tests** plus three vulnerability-policy tests, covering provider management, shared Redis pools, durable alerts, migrations and the existing protocols with PostgreSQL and Redis enabled. The [verification record](docs/implementation-plan.md) also lists SDK, browser, recovery and migration checks and their environment limits. Live-provider testing and successful native container CI are separate checks.
 
 [Contributor guide](CONTRIBUTING.md) · [Security policy](SECURITY.md) · [MIT license](LICENSE).

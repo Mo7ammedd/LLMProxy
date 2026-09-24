@@ -17,6 +17,23 @@ namespace LLMProxy.Infrastructure.Persistence.Migrations.Sqlite
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.12");
 
+            modelBuilder.Entity("LLMProxy.Domain.AlertEvaluationLock", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("alert_evaluation_lock", (string)null);
+
+                    b.HasData(
+                        new
+                        {
+                            Id = 1
+                        });
+                });
+
             modelBuilder.Entity("LLMProxy.Domain.ApiKey", b =>
                 {
                     b.Property<Guid>("Id")
@@ -284,6 +301,99 @@ namespace LLMProxy.Infrastructure.Persistence.Migrations.Sqlite
                     b.ToTable("gateway_files", (string)null);
                 });
 
+            modelBuilder.Entity("LLMProxy.Domain.OperationalAlert", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<long?>("AcknowledgedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("AcknowledgedBy")
+                        .HasMaxLength(160)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long?>("DeliveredAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("DeliveryAttempts")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long?>("DeliveryLeaseUntil")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Fingerprint")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("LastSeenAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Message")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long?>("NextDeliveryAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Occurrences")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long?>("ResolvedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Resource")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Severity")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("StartedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Fingerprint")
+                        .IsUnique();
+
+                    b.HasIndex("ResolvedAt", "StartedAt");
+
+                    b.ToTable("operational_alerts", (string)null);
+                });
+
+            modelBuilder.Entity("LLMProxy.Domain.OperationsRevision", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("Version")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("operations_revision", (string)null);
+
+                    b.HasData(
+                        new
+                        {
+                            Id = 1,
+                            Version = 0L
+                        });
+                });
+
             modelBuilder.Entity("LLMProxy.Domain.OperatorAccount", b =>
                 {
                     b.Property<Guid>("Id")
@@ -469,6 +579,36 @@ namespace LLMProxy.Infrastructure.Persistence.Migrations.Sqlite
                     b.ToTable("retired_credentials", (string)null);
                 });
 
+            modelBuilder.Entity("LLMProxy.Domain.StoredProviderKey", b =>
+                {
+                    b.Property<string>("Provider")
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("KeyId")
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Ciphertext")
+                        .HasMaxLength(12000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Label")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("UpdatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Provider", "KeyId");
+
+                    b.ToTable("provider_keys", (string)null);
+                });
+
             modelBuilder.Entity("LLMProxy.Domain.UpstreamAttempt", b =>
                 {
                     b.Property<Guid>("Id")
@@ -536,6 +676,8 @@ namespace LLMProxy.Infrastructure.Persistence.Migrations.Sqlite
                     b.HasKey("Id");
 
                     b.HasIndex("RequestId", "CreatedAt");
+
+                    b.HasIndex("CreatedAt", "Provider", "ProviderKeyId");
 
                     b.ToTable("upstream_attempts", (string)null);
                 });

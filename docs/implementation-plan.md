@@ -23,7 +23,7 @@ Each increment includes relevant migrations, tests and API documentation. Provid
 - Chromium desktop/mobile checks passed for login/error handling, charts, CSV, pagination/filters, key creation/edit/rotation, operator creation, audit, reload and auditor controls, with no JavaScript or CSP errors.
 - Two-instance recovery drill: 21,394/21,394 requests over 60.015 seconds, 356.479 requests/second, 39.91 ms p95 latency and 28.10 ms p95 first-token latency. A 30.125-second stream completed; crash recovery charged the orphan once, Redis loss failed admission closed and recovered, and a PostgreSQL backup restored with matching keys, usage, monthly counters, attempts and audit. Measurements use local mocks, not production providers.
 
-Generated reports/screenshots are under `artifacts/`. The container daemon crashes in this workspace; local Docker runtime checks and the remote ARM64 job have not run. CI includes native ARM64 and AMD64 container/SDK jobs and gates publication on them. No image or release was published as part of local verification.
+The original local reports/screenshots were recorded under `artifacts/`. The workspace container daemon was unavailable; the [subsequent v0.2 source CI](https://github.com/Mo7ammedd/LLMProxy/actions/runs/35991763024) passed native ARM64 and AMD64 container/SDK checks before publication. Local tests alone do not constitute a published release.
 
 ## Multiple keys per provider
 
@@ -38,6 +38,17 @@ Additional scope requested: allow one provider to use multiple upstream API keys
 
 Verification on 2026-09-24: **327 tests passed** (60 unit, 189 provider, 78 integration), including 73 new pool tests. PostgreSQL and Redis were enabled; there were no failures or skips. Release compilation, formatting, OpenAPI/documentation checks and EF model/migration consistency checks passed for both databases. Provider traffic used mocks.
 
+## Provider operations and release security (0.3)
+
+- [x] Provider/key dashboard, encrypted durable additions, enable/disable overrides, per-key usage/failures/cooldowns and audited administrator APIs.
+- [x] Shared Redis rotation/cooldowns scoped by account, managed-key revision propagation and safe in-flight behavior.
+- [x] Optional credential/model checks with mocked test coverage, bounded attempts and no automatic live calls.
+- [x] Durable budget/error/latency/pool alerts, acknowledgment/recovery, cross-replica deduplication and optional leased webhook delivery.
+- [x] Required main CI checks, administrator enforcement, secret scanning/push protection, private vulnerability reports and dependency security updates.
+- [x] Pinned build inputs, native/final-image vulnerability gates, image signatures, scan attestations, SPDX SBOMs and provenance/release artifacts.
+
+Local verification on 2026-09-24: **347 .NET tests passed** (60 unit, 189 provider, 98 integration) with PostgreSQL and Redis enabled and no skips, plus three vulnerability-policy tests. Both EF migration models are current. OpenAPI 3.1, Actionlint, shell/Python/JavaScript syntax and formatting checks pass. Python, TypeScript and C# SDK smoke checks and the provider-key/discovery/alert lifecycle use local mocks. Desktop/mobile console checks also passed for provider key add/disable/enable, model discovery, alert acknowledgment and auditor controls without JavaScript/CSP errors. Native container and signing checks are performed by the publication workflow; consult its run and release assets for the published version's evidence.
+
 ## Deliberate boundaries
 
-Operator identities are local; SSO/MFA are follow-up work. Responses is stateless and excludes stored/background responses, hosted tools and provider file references. Batches use gateway workers and ordinary pricing. Latency samples and provider key rotation/cooldowns are process-local, reload applies separately to each replica, and live-provider compatibility/pricing still depends on deployment configuration. See [extended APIs](expanded-api.md) and the [remaining roadmap](roadmap.md).
+Operator identities are local; SSO/MFA are follow-up work. Responses is stateless and excludes stored/background responses, hosted tools and provider file references. Batches use gateway workers and ordinary pricing. Latency-routing samples remain process-local. Provider key rotation/cooldowns use Redis in PostgreSQL mode and managed key changes propagate automatically; file/environment reload applies separately to each replica. Live-provider compatibility/pricing still depends on deployment configuration. See [extended APIs](expanded-api.md) and the [remaining roadmap](roadmap.md).

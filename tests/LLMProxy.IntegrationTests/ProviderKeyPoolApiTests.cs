@@ -105,7 +105,7 @@ public sealed class ProviderKeyPoolApiTests
     }
 
     [Fact]
-    public async Task Reload_replaces_pool_keys_without_changing_inflight_credentials()
+    public async Task Reload_preserves_shared_rotation_without_changing_inflight_credentials()
     {
         await using var factory = PoolFactory();
         var (client, key) = await factory.ClientAsync();
@@ -129,11 +129,12 @@ public sealed class ProviderKeyPoolApiTests
             Assert.Equal(HttpStatusCode.OK, (await pending).StatusCode);
             factory.Backend.BeforeResponse = null;
             Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/v1/chat/completions", Payload())).StatusCode);
-            Assert.Equal(new[] { FirstKey, replacement }, factory.Backend.Credentials);
+            // Shared pool rotation survives a catalog reload.
+            Assert.Equal(new[] { FirstKey, "other-replacement-integration-fixture" }, factory.Backend.Credentials);
             var usage = await factory.Services.GetRequiredService<IGatewayStore>().ListUsageAsync(key.Details.Id, 10, default);
             var management = factory.Services.GetRequiredService<IManagementStore>();
             var attempts = await Task.WhenAll(usage.Select(row => management.ListAttemptsAsync(row.RequestId, default)));
-            Assert.Equal(new[] { Fingerprint(FirstKey), Fingerprint(replacement) }.Order(), attempts.SelectMany(x => x).Select(x => x.ProviderKeyId).Order());
+            Assert.Equal(new[] { Fingerprint(FirstKey), Fingerprint("other-replacement-integration-fixture") }.Order(), attempts.SelectMany(x => x).Select(x => x.ProviderKeyId).Order());
         }
     }
 

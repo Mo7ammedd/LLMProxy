@@ -21,6 +21,7 @@ public sealed class GatewayFactory : WebApplicationFactory<Program>
     public LogCapture Logs { get; } = new();
     public Dictionary<string, string?> Overrides { get; } = [];
     public TimeProvider? Clock { get; set; }
+    public string DatabasePath => Path.Combine(_directory, "gateway.db");
 
     public GatewayFactory() { }
     internal GatewayFactory(bool configured) => _providers = configured ? ["openai", "anthropic"] : [];
@@ -33,7 +34,7 @@ public sealed class GatewayFactory : WebApplicationFactory<Program>
         var settings = new Dictionary<string, string?>
         {
             ["LLMProxy:Storage:Mode"] = "Standalone",
-            ["LLMProxy:Storage:SqlitePath"] = Path.Combine(_directory, "gateway.db"),
+            ["LLMProxy:Storage:SqlitePath"] = DatabasePath,
             ["LLMProxy:Providers:Resilience:RetryCount"] = "0",
             ["LLMPROXY_ADMIN_KEY"] = AdminKey,
             ["LLMPROXY_BOOTSTRAP_KEY"] = "",
@@ -41,7 +42,10 @@ public sealed class GatewayFactory : WebApplicationFactory<Program>
             ["FOUNDRY_TOKEN_SCOPE"] = "https://ai.azure.com/.default",
             ["OLLAMA_ALLOW_INSECURE_HTTP"] = "false"
             ,
-            ["LLMProxy:Batches:Workers"] = "0"
+            ["LLMProxy:Batches:Workers"] = "0",
+            ["LLMProxy:Alerts:Enabled"] = "false",
+            ["LLMProxy:Operations:LiveChecksEnabled"] = "false",
+            ["LLMPROXY_PROVIDER_KEY_ENCRYPTION_KEY"] = ""
         };
         var connections = new (string Name, string Section, string Prefix, string Path)[]
         {
@@ -65,7 +69,16 @@ public sealed class GatewayFactory : WebApplicationFactory<Program>
         {
             if (Clock is not null) { services.RemoveAll<TimeProvider>(); services.AddSingleton(Clock); }
             foreach (var (name, _, _, _) in connections)
+            {
                 services.AddHttpClient("llmproxy." + name).ConfigurePrimaryHttpMessageHandler(() => new BackendHandler(Backend));
+                services.AddHttpClient("llmproxy-check." + name).ConfigurePrimaryHttpMessageHandler(() => new BackendHandler(Backend));
+            }
+            foreach (var name in Overrides.Keys.Where(key => key.StartsWith("LLMProxy:Providers:Accounts:", StringComparison.Ordinal))
+                .Select(key => key.Split(':')[3]).Distinct())
+            {
+                services.AddHttpClient("llmproxy." + name).ConfigurePrimaryHttpMessageHandler(() => new BackendHandler(Backend));
+                services.AddHttpClient("llmproxy-check." + name).ConfigurePrimaryHttpMessageHandler(() => new BackendHandler(Backend));
+            }
             services.AddSingleton<ILoggerProvider>(Logs);
         });
     }
@@ -105,12 +118,13 @@ public sealed class FakeBackend
 
     public async Task<HttpResponseMessage> RespondAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
-        var body = await request.Content!.ReadAsStringAsync(cancellationToken);
+        var body = request.Content is null ? "{}" : await request.Content.ReadAsStringAsync(cancellationToken);
         Hosts.Enqueue(request.RequestUri!.Host);
         Bodies.Enqueue(body);
         Credentials.Enqueue(request.Headers.Authorization?.Parameter);
         if (BeforeResponse is { } before) await before(cancellationToken);
         if (ResponseOverride?.Invoke(request) is { } supplied) return supplied;
+        if (request.Method == HttpMethod.Get) return JsonResponse("""{"data":[{"id":"fixture-model"}]}""");
         if (Mode == "deadline") await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
         if (Mode == "failure" || Mode == "fallback" && request.RequestUri.Host == "openai.test")
             return new HttpResponseMessage(HttpStatusCode.TooManyRequests) { Content = new StringContent("upstream-secret and confidential prompt must never escape") };
