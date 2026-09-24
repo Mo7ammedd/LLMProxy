@@ -9,6 +9,7 @@ public sealed class GeminiProvider(ProviderHttpTransport transport, ProviderOpti
 {
     public string Name => "gemini";
     public bool IsConfigured => options.Gemini.IsConfigured;
+    public ModelCapabilities Capabilities => ProviderCapabilities.For(Name);
 
     public async Task<LlmResponse> ChatCompletionAsync(LlmRequest request, CancellationToken cancellationToken)
     {
@@ -87,7 +88,8 @@ public sealed class GeminiProvider(ProviderHttpTransport transport, ProviderOpti
     {
         var method = request.Stream ? "streamGenerateContent?alt=sse" : "generateContent";
         return transport.SendAsync(Name, options.Gemini.Endpoint($"models/{Uri.EscapeDataString(request.Model)}:{method}"),
-            BuildPayload(request), new Dictionary<string, string> { ["x-goog-api-key"] = options.Gemini.ApiKey }, request.Stream, cancellationToken);
+            BuildPayload(request), new Dictionary<string, string> { ["x-goog-api-key"] = options.Gemini.ApiKey }, request.Stream, cancellationToken,
+            options.Gemini, "x-goog-api-key", "");
     }
 
     internal static JsonObject BuildPayload(LlmRequest request)
@@ -118,7 +120,7 @@ public sealed class GeminiProvider(ProviderHttpTransport transport, ProviderOpti
             }
             else
             {
-                if (message.Text() is { Length: > 0 } text) parts.Add(new JsonObject { ["text"] = text });
+                foreach (var part in MediaContent.Gemini(message)) parts.Add(part);
                 foreach (var call in message.ToolCalls ?? [])
                 {
                     callNames[call.Id] = call.Function.Name;
@@ -136,6 +138,8 @@ public sealed class GeminiProvider(ProviderHttpTransport transport, ProviderOpti
         var generation = new JsonObject { ["maxOutputTokens"] = request.OutputTokenLimit, ["candidateCount"] = 1 };
         if (request.Temperature is { } temperature) generation["temperature"] = temperature;
         if (request.TopP is { } topP) generation["topP"] = topP;
+        if (request.ThinkingBudgetTokens is { } budget)
+            generation["thinkingConfig"] = new JsonObject { ["thinkingBudget"] = budget };
         if (request.Stop is { ValueKind: JsonValueKind.String } stop) generation["stopSequences"] = new JsonArray(stop.GetString());
         else if (request.Stop is { ValueKind: JsonValueKind.Array }) generation["stopSequences"] = ProviderJson.Node(request.Stop);
         if (request.ResponseFormat is { ValueKind: JsonValueKind.Object } format)
@@ -184,6 +188,11 @@ public sealed class GeminiProvider(ProviderHttpTransport transport, ProviderOpti
     private static TokenUsage Usage(JsonElement root)
     {
         var usage = root.Object("usageMetadata");
-        return TokenUsage.From(usage.Number("promptTokenCount"), usage.Number("candidatesTokenCount") + usage.Number("thoughtsTokenCount"));
+        return TokenUsage.From(usage.Number("promptTokenCount"), usage.Number("candidatesTokenCount") + usage.Number("thoughtsTokenCount"))
+            with
+        {
+            PromptTokensDetails = usage.Object("cachedContentTokenCount").ValueKind == JsonValueKind.Number
+                ? new(usage.Number("cachedContentTokenCount")) : null
+        };
     }
 }

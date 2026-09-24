@@ -1,10 +1,14 @@
 """Local, deterministic provider wire-protocol fixtures. Never contacts a provider."""
 import json
 import argparse
+import base64
+import struct
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
 class Handler(BaseHTTPRequestHandler):
+    long_stream_seconds = 0
     def log_message(self, *_args):
         pass
 
@@ -14,7 +18,8 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(b'{"status":"ok"}')
 
     def do_POST(self):
-        if self.path not in ("/v1/chat/completions", "/openai/v1/chat/completions", "/v2/chat"):
+        if self.path not in ("/v1/chat/completions", "/openai/v1/chat/completions", "/v2/chat",
+                             "/v1/embeddings", "/openai/v1/embeddings", "/v1/responses", "/openai/v1/responses"):
             self.send_error(404)
             return
         size = int(self.headers.get("Content-Length", "0"))
@@ -27,6 +32,38 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream" if streaming else "application/json")
         self.end_headers()
+        if self.path.endswith("/embeddings"):
+            embedding = base64.b64encode(struct.pack("<2f", .1, .2)).decode() if request.get("encoding_format") == "base64" else [.1, .2]
+            self.wfile.write(json.dumps({"object": "list", "model": request["model"],
+                "data": [{"object": "embedding", "index": 0, "embedding": embedding}],
+                "usage": {"prompt_tokens": 3, "total_tokens": 3}}).encode())
+            return
+        if self.path.endswith("/responses"):
+            content = {"type": "output_text", "text": "Hello", "annotations": [], "logprobs": []}
+            item = {"id": "msg_mock", "type": "message", "role": "assistant", "status": "completed", "content": [content]}
+            result = {"id": "resp_mock", "object": "response", "created_at": 1, "status": "completed",
+                      "model": request["model"], "output": [item], "error": None, "incomplete_details": None,
+                      "metadata": {}, "tools": [], "tool_choice": "auto", "parallel_tool_calls": True,
+                      "usage": {"input_tokens": 3, "output_tokens": 2, "total_tokens": 5,
+                                "input_tokens_details": {"cached_tokens": 0}, "output_tokens_details": {"reasoning_tokens": 0}}}
+            if not streaming:
+                self.wfile.write(json.dumps(result).encode())
+                return
+            events = [
+                {"type": "response.created", "response": {**result, "status": "in_progress", "output": [], "usage": None}},
+                {"type": "response.output_item.added", "output_index": 0, "item": {**item, "status": "in_progress", "content": []}},
+                {"type": "response.content_part.added", "item_id": "msg_mock", "output_index": 0, "content_index": 0, "part": {**content, "text": ""}},
+                {"type": "response.output_text.delta", "item_id": "msg_mock", "output_index": 0, "content_index": 0, "delta": "Hello", "logprobs": []},
+                {"type": "response.output_text.done", "item_id": "msg_mock", "output_index": 0, "content_index": 0, "text": "Hello", "logprobs": []},
+                {"type": "response.content_part.done", "item_id": "msg_mock", "output_index": 0, "content_index": 0, "part": content},
+                {"type": "response.output_item.done", "output_index": 0, "item": item},
+                {"type": "response.completed", "response": result},
+            ]
+            for index, event in enumerate(events):
+                event["sequence_number"] = index
+                self.wfile.write(("event: " + event["type"] + "\ndata: " + json.dumps(event) + "\n\n").encode())
+                self.wfile.flush()
+            return
         if self.path == "/v2/chat":
             native_usage = {"tokens": {"input_tokens": 3, "output_tokens": 2},
                             "billed_units": {"input_tokens": 1, "output_tokens": 1}}
@@ -45,6 +82,14 @@ class Handler(BaseHTTPRequestHandler):
                     "usage": native_usage}).encode())
             return
         if streaming:
+            if self.long_stream_seconds and any(message.get("content") == "__long_stream__" for message in request.get("messages", [])):
+                try:
+                    for _ in range(max(1, int(self.long_stream_seconds * 10))):
+                        self.wfile.write(b'data: {"choices":[{"index":0,"delta":{"content":"Hello"}}]}\n\n')
+                        self.wfile.flush()
+                        time.sleep(.1)
+                except (BrokenPipeError, ConnectionResetError):
+                    return
             chunks = [
                 {"choices": [{"index": 0, "delta": {"role": "assistant", "content": "Hello"}, "finish_reason": None}]},
                 {"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]},

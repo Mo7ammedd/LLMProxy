@@ -41,6 +41,9 @@ namespace LLMProxy.Infrastructure.Persistence.Migrations.Postgres
                     b.Property<bool>("Enabled")
                         .HasColumnType("boolean");
 
+                    b.Property<DateTimeOffset?>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<string>("KeyHash")
                         .IsRequired()
                         .HasMaxLength(64)
@@ -53,6 +56,12 @@ namespace LLMProxy.Infrastructure.Persistence.Migrations.Postgres
 
                     b.Property<DateTimeOffset?>("LastUsedAt")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<long?>("MonthlyBudgetUnits")
+                        .HasColumnType("bigint");
+
+                    b.Property<long?>("MonthlyTokenLimit")
+                        .HasColumnType("bigint");
 
                     b.Property<string>("Owner")
                         .IsRequired()
@@ -90,6 +99,252 @@ namespace LLMProxy.Infrastructure.Persistence.Migrations.Postgres
                     b.ToTable("api_keys", (string)null);
                 });
 
+            modelBuilder.Entity("LLMProxy.Domain.AuditRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Action")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("Actor")
+                        .IsRequired()
+                        .HasMaxLength(160)
+                        .HasColumnType("character varying(160)");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("RequestId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Resource")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<int>("StatusCode")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CreatedAt", "Id");
+
+                    b.ToTable("audit_events", (string)null);
+                });
+
+            modelBuilder.Entity("LLMProxy.Domain.BatchItem", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("BatchId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("Body")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("CustomId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<int?>("HttpStatus")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("Index")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTimeOffset?>("LeaseExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("LeaseOwner")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("ResultJson")
+                        .HasColumnType("text");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(24)
+                        .HasColumnType("character varying(24)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("BatchId", "Index")
+                        .IsUnique();
+
+                    b.HasIndex("Status", "LeaseExpiresAt");
+
+                    b.ToTable("batch_items", (string)null);
+                });
+
+            modelBuilder.Entity("LLMProxy.Domain.BatchJob", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<Guid>("ApiKeyId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Completed")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Endpoint")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("ErrorFileId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("Failed")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTimeOffset?>("FinishedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("InputFileId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("MetadataJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("OutputFileId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(24)
+                        .HasColumnType("character varying(24)");
+
+                    b.Property<int>("Total")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ApiKeyId", "CreatedAt", "Id");
+
+                    b.ToTable("batch_jobs", (string)null);
+                });
+
+            modelBuilder.Entity("LLMProxy.Domain.GatewayFile", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<Guid>("ApiKeyId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("BatchId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<long>("Bytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("Content")
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("ErrorsOnly")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Filename")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("Purpose")
+                        .IsRequired()
+                        .HasMaxLength(24)
+                        .HasColumnType("character varying(24)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ApiKeyId", "CreatedAt", "Id");
+
+                    b.ToTable("gateway_files", (string)null);
+                });
+
+            modelBuilder.Entity("LLMProxy.Domain.OperatorAccount", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("PasswordHash")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<string>("Role")
+                        .IsRequired()
+                        .HasMaxLength(24)
+                        .HasColumnType("character varying(24)");
+
+                    b.Property<string>("Username")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Username")
+                        .IsUnique();
+
+                    b.ToTable("operators", (string)null);
+                });
+
+            modelBuilder.Entity("LLMProxy.Domain.OperatorSession", b =>
+                {
+                    b.Property<string>("TokenHash")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTimeOffset>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("OperatorId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("TokenHash");
+
+                    b.HasIndex("ExpiresAt");
+
+                    b.HasIndex("OperatorId");
+
+                    b.ToTable("operator_sessions", (string)null);
+                });
+
             modelBuilder.Entity("LLMProxy.Domain.QuotaReservation", b =>
                 {
                     b.Property<Guid>("RequestId")
@@ -113,6 +368,16 @@ namespace LLMProxy.Infrastructure.Persistence.Migrations.Postgres
                         .HasMaxLength(128)
                         .HasColumnType("character varying(128)");
 
+                    b.Property<string>("Operation")
+                        .IsRequired()
+                        .HasMaxLength(24)
+                        .HasColumnType("character varying(24)");
+
+                    b.Property<string>("QuotaPeriod")
+                        .IsRequired()
+                        .HasMaxLength(7)
+                        .HasColumnType("character varying(7)");
+
                     b.Property<long>("Tokens")
                         .HasColumnType("bigint");
 
@@ -123,6 +388,161 @@ namespace LLMProxy.Infrastructure.Persistence.Migrations.Postgres
                     b.HasIndex("ExpiresAt");
 
                     b.ToTable("quota_reservations", (string)null);
+                });
+
+            modelBuilder.Entity("LLMProxy.Domain.QuotaWindow", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<Guid>("ApiKeyId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Period")
+                        .IsRequired()
+                        .HasMaxLength(7)
+                        .HasColumnType("character varying(7)");
+
+                    b.Property<long>("ReservedTokens")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("ReservedUnits")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("SpentUnits")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("UsedTokens")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ApiKeyId", "Period")
+                        .IsUnique();
+
+                    b.ToTable("quota_windows", (string)null);
+                });
+
+            modelBuilder.Entity("LLMProxy.Domain.ReconciliationRecord", b =>
+                {
+                    b.Property<string>("Reference")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("Actor")
+                        .IsRequired()
+                        .HasMaxLength(160)
+                        .HasColumnType("character varying(160)");
+
+                    b.Property<decimal>("ActualCost")
+                        .HasPrecision(20, 9)
+                        .HasColumnType("numeric(20,9)");
+
+                    b.Property<Guid>("AttemptId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Reference");
+
+                    b.HasIndex("AttemptId")
+                        .IsUnique();
+
+                    b.ToTable("billing_reconciliations", (string)null);
+                });
+
+            modelBuilder.Entity("LLMProxy.Domain.RetiredKeyCredential", b =>
+                {
+                    b.Property<string>("KeyHash")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<Guid>("ApiKeyId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("KeyHash");
+
+                    b.HasIndex("ApiKeyId");
+
+                    b.HasIndex("ExpiresAt");
+
+                    b.ToTable("retired_credentials", (string)null);
+                });
+
+            modelBuilder.Entity("LLMProxy.Domain.UpstreamAttempt", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal?>("ActualCost")
+                        .HasPrecision(20, 9)
+                        .HasColumnType("numeric(20,9)");
+
+                    b.Property<long>("CacheCreationTokens")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("CachedInputTokens")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<decimal>("EstimatedCost")
+                        .HasPrecision(20, 9)
+                        .HasColumnType("numeric(20,9)");
+
+                    b.Property<int?>("HttpStatus")
+                        .HasColumnType("integer");
+
+                    b.Property<long>("InputTokens")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("LatencyMs")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("Model")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<long>("OutputTokens")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("Provider")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("ProviderKeyId")
+                        .HasMaxLength(36)
+                        .HasColumnType("character varying(36)");
+
+                    b.Property<string>("ProviderRequestId")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<Guid>("RequestId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<bool>("UsageEstimated")
+                        .HasColumnType("boolean");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RequestId", "CreatedAt");
+
+                    b.ToTable("upstream_attempts", (string)null);
                 });
 
             modelBuilder.Entity("LLMProxy.Domain.UsageRecord", b =>
@@ -156,6 +576,11 @@ namespace LLMProxy.Infrastructure.Persistence.Migrations.Postgres
                         .HasMaxLength(128)
                         .HasColumnType("character varying(128)");
 
+                    b.Property<string>("Operation")
+                        .IsRequired()
+                        .HasMaxLength(24)
+                        .HasColumnType("character varying(24)");
+
                     b.Property<long>("OutputTokens")
                         .HasColumnType("bigint");
 
@@ -181,7 +606,36 @@ namespace LLMProxy.Infrastructure.Persistence.Migrations.Postgres
 
                     b.HasIndex("ApiKeyId", "CreatedAt");
 
+                    b.HasIndex("CreatedAt", "RequestId");
+
                     b.ToTable("usage_records", (string)null);
+                });
+
+            modelBuilder.Entity("LLMProxy.Domain.BatchItem", b =>
+                {
+                    b.HasOne("LLMProxy.Domain.BatchJob", null)
+                        .WithMany()
+                        .HasForeignKey("BatchId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("LLMProxy.Domain.BatchJob", b =>
+                {
+                    b.HasOne("LLMProxy.Domain.ApiKey", null)
+                        .WithMany()
+                        .HasForeignKey("ApiKeyId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("LLMProxy.Domain.OperatorSession", b =>
+                {
+                    b.HasOne("LLMProxy.Domain.OperatorAccount", null)
+                        .WithMany()
+                        .HasForeignKey("OperatorId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("LLMProxy.Domain.QuotaReservation", b =>
@@ -190,6 +644,24 @@ namespace LLMProxy.Infrastructure.Persistence.Migrations.Postgres
                         .WithMany()
                         .HasForeignKey("ApiKeyId")
                         .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("LLMProxy.Domain.QuotaWindow", b =>
+                {
+                    b.HasOne("LLMProxy.Domain.ApiKey", null)
+                        .WithMany()
+                        .HasForeignKey("ApiKeyId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("LLMProxy.Domain.RetiredKeyCredential", b =>
+                {
+                    b.HasOne("LLMProxy.Domain.ApiKey", null)
+                        .WithMany()
+                        .HasForeignKey("ApiKeyId")
+                        .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });
 

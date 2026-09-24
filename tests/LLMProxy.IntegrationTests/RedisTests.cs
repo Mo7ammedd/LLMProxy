@@ -9,6 +9,37 @@ namespace LLMProxy.IntegrationTests;
 public sealed class RedisTests
 {
     [RedisFact]
+    public async Task Multiple_instances_share_concurrency_leases_without_partially_consuming_scopes()
+    {
+        using var first = await ConnectionMultiplexer.ConnectAsync(Environment.GetEnvironmentVariable("LLMPROXY_TEST_REDIS")!);
+        using var second = await ConnectionMultiplexer.ConnectAsync(Environment.GetEnvironmentVariable("LLMPROXY_TEST_REDIS")!);
+        var options = new StorageOptions { RedisKeyPrefix = "llmproxy-lease-test-" + Guid.NewGuid().ToString("N") };
+        IConcurrencyLimiter[] limiters = [new RedisConcurrencyLimiter(first, options), new RedisConcurrencyLimiter(second, options)];
+        var leases = await Task.WhenAll(Enumerable.Range(0, 50).Select(async i =>
+        {
+            try { return await limiters[i % 2].AcquireAsync([new("global", 10), new("model:fast", 3)], TimeSpan.FromMinutes(1), default); }
+            catch (GatewayException error) when (error.Code == "concurrency_limit_exceeded") { return null; }
+        }));
+        try
+        {
+            Assert.Equal(3, leases.Count(lease => lease is not null));
+            var others = new List<IAsyncDisposable>();
+            try
+            {
+                for (var i = 0; i < 7; i++) others.Add(await limiters[i % 2].AcquireAsync(
+                    [new("global", 10), new("model:other", 10)], TimeSpan.FromMinutes(1), default));
+                var full = await Assert.ThrowsAsync<GatewayException>(() => limiters[0].AcquireAsync([new("global", 10)], TimeSpan.FromMinutes(1), default));
+                Assert.Equal(429, full.StatusCode);
+                await leases.First(lease => lease is not null)!.DisposeAsync();
+                await leases.First(lease => lease is not null)!.DisposeAsync();
+                await using var replacement = await limiters[1].AcquireAsync([new("global", 10), new("model:fast", 3)], TimeSpan.FromMinutes(1), default);
+            }
+            finally { foreach (var lease in others) await lease.DisposeAsync(); }
+        }
+        finally { foreach (var lease in leases) if (lease is not null) await lease.DisposeAsync(); }
+    }
+
+    [RedisFact]
     public async Task Multiple_instances_share_atomic_rate_limits_for_all_scopes()
     {
         using var first = await ConnectionMultiplexer.ConnectAsync(Environment.GetEnvironmentVariable("LLMPROXY_TEST_REDIS")!);
@@ -53,6 +84,10 @@ public sealed class RedisTests
         var error = await Assert.ThrowsAsync<GatewayException>(() => limiter.AcquireAsync([new RateLimitScope("key", 10)], default));
         Assert.Equal("rate_limit_unavailable", error.Code);
         Assert.Equal(503, error.StatusCode);
+        var concurrency = new RedisConcurrencyLimiter(redis, new StorageOptions());
+        var busy = await Assert.ThrowsAsync<GatewayException>(() => concurrency.AcquireAsync([new("global", 10)], TimeSpan.FromMinutes(1), default));
+        Assert.Equal("concurrency_unavailable", busy.Code);
+        Assert.Equal(503, busy.StatusCode);
         Assert.Equal(HealthStatus.Unhealthy, (await new RedisHealthCheck(redis).CheckHealthAsync(new HealthCheckContext())).Status);
     }
 }

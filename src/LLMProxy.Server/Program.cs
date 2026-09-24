@@ -8,7 +8,7 @@ using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 
 if (args is ["healthcheck"]) return await ServerCommands.HealthCheckAsync();
-var commandMode = args.FirstOrDefault() is "keys" or "migrate";
+var commandMode = args.FirstOrDefault() is "keys" or "migrate" or "reservations";
 var builder = WebApplication.CreateBuilder(commandMode ? [] : args);
 builder.Logging.ClearProviders();
 builder.Logging.AddJsonConsole(options => options.IncludeScopes = true);
@@ -30,6 +30,8 @@ builder.Services.AddLlmProxyApplication(gatewayOptions);
 builder.Services.AddLlmProxyInfrastructure(builder.Configuration);
 builder.Services.AddLlmProxyProviders(builder.Configuration);
 builder.Services.AddLlmProxyApi(apiOptions);
+builder.Services.AddSingleton<IRuntimeConfiguration, RuntimeConfigurationService>();
+builder.Services.AddHostedService<BatchWorker>();
 
 var exportOtlp = !string.IsNullOrWhiteSpace(builder.Configuration["OTEL_EXPORTER_OTLP_ENDPOINT"]);
 builder.Services.AddOpenTelemetry().ConfigureResource(resource => resource.AddService("LLMProxy"))

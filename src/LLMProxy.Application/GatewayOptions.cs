@@ -6,6 +6,15 @@ public sealed class GatewayOptions
     public Dictionary<string, PriceOptions> Pricing { get; set; } = new(StringComparer.Ordinal);
     public RequestOptions Requests { get; set; } = new();
     public RateLimitOptions RateLimiting { get; set; } = new();
+    public ConcurrencyOptions Concurrency { get; set; } = new();
+    public BatchOptions Batches { get; set; } = new();
+}
+
+public sealed class BatchOptions
+{
+    public int MaxFileBytes { get; set; } = 10 * 1024 * 1024;
+    public int MaxRequests { get; set; } = 1000;
+    public int Workers { get; set; } = 4;
 }
 
 public sealed class ModelOptions
@@ -16,12 +25,33 @@ public sealed class ModelOptions
     public bool EnableFallback { get; set; } = true;
     public int RequestsPerMinute { get; set; } = 600;
     public int MaxOutputTokens { get; set; } = 4096;
+    public int MaxConcurrentRequests { get; set; } = 100;
+    public Dictionary<string, LLMProxy.Domain.ModelCapabilities> ProviderCapabilities { get; set; } = new(StringComparer.Ordinal);
 }
 
 public sealed class PriceOptions
 {
     public decimal InputPerMillion { get; set; }
     public decimal OutputPerMillion { get; set; }
+    public decimal? CachedInputPerMillion { get; set; }
+    public decimal? CacheCreationPerMillion { get; set; }
+    public List<PriceTierOptions> Tiers { get; set; } = [];
+}
+
+public sealed class PriceTierOptions
+{
+    public long FromInputTokens { get; set; }
+    public decimal InputPerMillion { get; set; }
+    public decimal OutputPerMillion { get; set; }
+    public decimal? CachedInputPerMillion { get; set; }
+    public decimal? CacheCreationPerMillion { get; set; }
+}
+
+public sealed class ConcurrencyOptions
+{
+    public int GlobalLimit { get; set; } = 1000;
+    public int PerKeyLimit { get; set; } = 20;
+    public int PerProviderLimit { get; set; } = 100;
 }
 
 public sealed class RequestOptions

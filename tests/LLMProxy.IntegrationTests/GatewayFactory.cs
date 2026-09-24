@@ -7,6 +7,7 @@ using LLMProxy.Application;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 
 namespace LLMProxy.IntegrationTests;
@@ -18,6 +19,8 @@ public sealed class GatewayFactory : WebApplicationFactory<Program>
     public const string AdminKey = "admin-integration-fixture-only-not-a-live-secret";
     public FakeBackend Backend { get; } = new();
     public LogCapture Logs { get; } = new();
+    public Dictionary<string, string?> Overrides { get; } = [];
+    public TimeProvider? Clock { get; set; }
 
     public GatewayFactory() { }
     internal GatewayFactory(bool configured) => _providers = configured ? ["openai", "anthropic"] : [];
@@ -37,6 +40,8 @@ public sealed class GatewayFactory : WebApplicationFactory<Program>
             ["FOUNDRY_AUTHENTICATION"] = "ApiKey",
             ["FOUNDRY_TOKEN_SCOPE"] = "https://ai.azure.com/.default",
             ["OLLAMA_ALLOW_INSECURE_HTTP"] = "false"
+            ,
+            ["LLMProxy:Batches:Workers"] = "0"
         };
         var connections = new (string Name, string Section, string Prefix, string Path)[]
         {
@@ -54,9 +59,11 @@ public sealed class GatewayFactory : WebApplicationFactory<Program>
             settings[prefix + "_ENDPOINT"] = name == "ollama" && !enabled ? "" : "https://" + name + ".test" + path;
             settings["LLMProxy:Providers:" + section + ":BaseUrl"] = settings[prefix + "_ENDPOINT"];
         }
+        foreach (var setting in Overrides) settings[setting.Key] = setting.Value;
         foreach (var setting in settings) builder.UseSetting(setting.Key, setting.Value);
         builder.ConfigureServices(services =>
         {
+            if (Clock is not null) { services.RemoveAll<TimeProvider>(); services.AddSingleton(Clock); }
             foreach (var (name, _, _, _) in connections)
                 services.AddHttpClient("llmproxy." + name).ConfigurePrimaryHttpMessageHandler(() => new BackendHandler(Backend));
             services.AddSingleton<ILoggerProvider>(Logs);
@@ -89,19 +96,38 @@ public sealed class GatewayFactory : WebApplicationFactory<Program>
 public sealed class FakeBackend
 {
     public string Mode { get; set; } = "success";
+    public Func<CancellationToken, Task>? BeforeResponse { get; set; }
+    public Func<HttpRequestMessage, HttpResponseMessage?>? ResponseOverride { get; set; }
     public ConcurrentQueue<string> Hosts { get; } = new();
     public ConcurrentQueue<string> Bodies { get; } = new();
-    public void Reset(string mode = "success") { Mode = mode; Hosts.Clear(); Bodies.Clear(); }
+    public ConcurrentQueue<string?> Credentials { get; } = new();
+    public void Reset(string mode = "success") { Mode = mode; Hosts.Clear(); Bodies.Clear(); Credentials.Clear(); }
 
     public async Task<HttpResponseMessage> RespondAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
         var body = await request.Content!.ReadAsStringAsync(cancellationToken);
         Hosts.Enqueue(request.RequestUri!.Host);
         Bodies.Enqueue(body);
+        Credentials.Enqueue(request.Headers.Authorization?.Parameter);
+        if (BeforeResponse is { } before) await before(cancellationToken);
+        if (ResponseOverride?.Invoke(request) is { } supplied) return supplied;
+        if (Mode == "deadline") await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
         if (Mode == "failure" || Mode == "fallback" && request.RequestUri.Host == "openai.test")
             return new HttpResponseMessage(HttpStatusCode.TooManyRequests) { Content = new StringContent("upstream-secret and confidential prompt must never escape") };
         using var json = JsonDocument.Parse(body);
         var streaming = json.RootElement.TryGetProperty("stream", out var stream) && stream.GetBoolean();
+        if (request.RequestUri.AbsolutePath.EndsWith("/embeddings", StringComparison.Ordinal))
+            return JsonResponse("""{"object":"list","model":"upstream","data":[{"object":"embedding","index":0,"embedding":[0.1,0.2]}],"usage":{"prompt_tokens":3,"total_tokens":3}}""");
+        if (request.RequestUri.AbsolutePath.EndsWith("/responses", StringComparison.Ordinal))
+        {
+            const string normal = """{"id":"resp_fake","object":"response","created_at":1,"status":"completed","model":"upstream","output":[{"id":"msg_fake","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"Hello","annotations":[]}]}],"usage":{"input_tokens":3,"output_tokens":2,"total_tokens":5,"input_tokens_details":{"cached_tokens":1},"output_tokens_details":{"reasoning_tokens":0}}}""";
+            if (!streaming) return JsonResponse(normal);
+            var events = "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_fake\",\"model\":\"upstream\",\"status\":\"in_progress\"}}\n\n";
+            events += "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"Hello\",\"output_index\":0,\"content_index\":0,\"item_id\":\"msg_fake\"}\n\n";
+            events += Mode == "midstream" ? "event: error\ndata: {\"type\":\"error\",\"message\":\"confidential upstream text\"}\n\n"
+                : "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":" + normal + "}\n\n";
+            return JsonResponse(events, true);
+        }
         var response = request.RequestUri.Host switch
         {
             "anthropic.test" => """{"id":"msg_fake","type":"message","content":[{"type":"text","text":"Hello"}],"stop_reason":"end_turn","usage":{"input_tokens":3,"output_tokens":2}}""",
@@ -121,6 +147,8 @@ public sealed class FakeBackend
         }
         return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(response, Encoding.UTF8, streaming ? "text/event-stream" : "application/json") };
     }
+    private static HttpResponseMessage JsonResponse(string body, bool streaming = false) => new(HttpStatusCode.OK)
+    { Content = new StringContent(body, Encoding.UTF8, streaming ? "text/event-stream" : "application/json") };
 }
 
 internal sealed class BackendHandler(FakeBackend backend) : HttpMessageHandler

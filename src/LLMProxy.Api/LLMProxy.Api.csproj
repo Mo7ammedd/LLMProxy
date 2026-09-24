@@ -1,5 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <ItemGroup>
+    <EmbeddedResource Include="Dashboard/*" />
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <ProjectReference Include="../LLMProxy.Application/LLMProxy.Application.csproj" />
   </ItemGroup>

@@ -19,11 +19,15 @@ The built-in `fast` alias uses the following priority order. Providers participa
 | `groq` | `llama-3.1-8b-instant` | — |
 | `ollama` | `llama3.1:8b` | — |
 
-These are editable defaults, not a guarantee of model availability in your account. Readiness checks configuration without invoking a model or testing credentials remotely. Remove unavailable aliases or change their mappings and prices before exposing them to clients. The gateway supports one endpoint/credential configuration for each built-in provider ID.
+These are editable defaults, not a guarantee of model availability in your account. Readiness checks configuration without invoking a model or testing credentials remotely. Change mappings, capability declarations and prices for the models you operate. [Named accounts](configuration.md#named-provider-accounts) allow separate endpoints/credentials per adapter. They have separate circuits and concurrency limits and can be reloaded with model/pricing configuration.
+
+Every API-key adapter and named account also supports an [`ApiKeys` pool](configuration.md#multiple-api-keys) under one provider name. Requests rotate across keys, with automatic key failover and cooldowns. The pool shares model mappings, pricing and the provider concurrency limit; attempts identify the selected key with a fingerprint. Existing single-key settings remain supported.
+
+The `embeddings` alias maps OpenAI to `text-embedding-3-small`, Mistral to `mistral-embed` and Ollama to `nomic-embed-text`. Its fallback is disabled: choose a fixed model for each vector index. Adapter-level embeddings support also includes Azure OpenAI and Foundry. Native stateless Responses is supported through OpenAI and Foundry. [Extended protocol details](expanded-api.md#embeddings).
 
 ## Microsoft Foundry
 
-The `foundry` adapter uses Microsoft's OpenAI v1 Chat Completions API. Accepted base URL forms include:
+The `foundry` adapter uses Microsoft's OpenAI v1 chat, embeddings and Responses endpoints. Accepted base URL forms include:
 
 ```text
 https://RESOURCE.services.ai.azure.com
@@ -71,7 +75,7 @@ Change `FOUNDRY_TOKEN_SCOPE` if your resource or cloud requires a different audi
 
 This is an excerpt; retain the other required model/pricing entries. Replace the illustrative price with your deployment's rate. For a deployment serving only Foundry, use a complete configuration with `Providers: ["foundry"]`; see [replacing configuration arrays](configuration.md#complete-json-replacement).
 
-Coverage is limited to **OpenAI v1 chat deployments**. Foundry project URLs (`/api/projects/...`), Agents, Responses, the legacy Azure AI Inference preview API and Foundry's separate Anthropic/Claude API are different surfaces. They are not handled by this adapter. Availability of tools, structured output and sampling parameters depends on the deployed model. The separate `azure` adapter remains available for legacy Azure OpenAI deployment endpoints.
+Coverage is limited to **OpenAI v1 inference deployments**. Responses uses the gateway's stateless subset; embeddings requires a compatible deployment mapping. Foundry project URLs (`/api/projects/...`), Agents, the legacy Azure AI Inference preview API and Foundry's separate Anthropic/Claude API are not handled. Tools, media, reasoning controls and sampling parameters depend on the deployed model. The separate `azure` adapter supports chat and embeddings through legacy Azure OpenAI deployment endpoints.
 
 References: [Microsoft's v1 API guidance](https://learn.microsoft.com/en-us/azure/foundry/openai/api-version-lifecycle) · [Foundry SDK and authentication guidance](https://learn.microsoft.com/en-us/azure/foundry/how-to/develop/sdk-overview).
 
@@ -133,7 +137,7 @@ The supplied Compose file adds the host-gateway mapping. With plain Docker on Li
 
 Ollama is disabled until an explicit endpoint is configured. Local Ollama needs no provider API key. `OLLAMA_API_KEY` is optional for an authenticated reverse proxy. HTTP requires explicit opt-in; use HTTPS for remote deployments.
 
-The adapter supports text, tools, streaming, seed and JSON formats supported by the model. `tool_choice: "auto"` uses native selection; `"none"` removes offered tools. Required/named tool selection, strict tools and disabling parallel calls return `unsupported_parameter`.
+The adapter supports text, tools, streaming, embeddings, and model-supported image input, seed and JSON formats. The default `llama3.1:8b` target does not declare image capability; use a compatible installed model and update its target capabilities. `tool_choice: "auto"` uses native selection; `"none"` removes offered tools. Required/named selection, strict tools and disabling parallel calls are excluded by capability routing. Direct adapter calls can return `unsupported_parameter`.
 
 The upstream model name remains `llama3.1:8b`, while its pricing key is `ollama/llama3.1%3A8b` because colons separate .NET configuration paths. Default token cost is zero; hardware, electricity and hosting costs are not included. Change both model mapping and pricing when selecting a different installed model. [Ollama OpenAI compatibility](https://docs.ollama.com/api/openai-compatibility).
 

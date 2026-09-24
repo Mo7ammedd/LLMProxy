@@ -8,6 +8,8 @@ public sealed class FoundryProvider(ProviderHttpTransport transport, ProviderOpt
     : OpenAiCompatibleProvider(transport, options.Foundry)
 {
     public override string Name => "foundry";
+    protected override ProviderConnectionOptions? KeyConnection => options.Foundry.Authentication == FoundryAuthentication.ApiKey
+        ? options.Foundry : null;
 
     protected override Uri Endpoint(LlmRequest request) => options.Foundry.Endpoint(
         new Uri(options.Foundry.BaseUrl).AbsolutePath.TrimEnd('/') == ""

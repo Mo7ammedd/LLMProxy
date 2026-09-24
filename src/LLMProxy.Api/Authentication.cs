@@ -41,20 +41,31 @@ public sealed class GatewayKeyAuthenticationHandler(IOptionsMonitor<Authenticati
 }
 
 public sealed class AdminKeyAuthenticationHandler(IOptionsMonitor<AuthenticationSchemeOptions> options,
-    ILoggerFactory logger, UrlEncoder encoder, ApiOptions apiOptions) : AuthenticationHandler<AuthenticationSchemeOptions>(options, logger, encoder)
+    ILoggerFactory logger, UrlEncoder encoder, ApiOptions apiOptions, IManagementStore store, TimeProvider time)
+    : AuthenticationHandler<AuthenticationSchemeOptions>(options, logger, encoder)
 {
     public const string SchemeName = "AdminKey";
-    protected override Task<AuthenticateResult> HandleAuthenticateAsync()
+    protected override async Task<AuthenticateResult> HandleAuthenticateAsync()
     {
         var raw = GatewayKeyAuthenticationHandler.ReadBearer(Request.Headers.Authorization);
-        if (raw is null || apiOptions.AdminKey.Length == 0) return Task.FromResult(AuthenticateResult.NoResult());
-        var matches = CryptographicOperations.FixedTimeEquals(SHA256.HashData(Encoding.UTF8.GetBytes(raw)),
+        if (raw is null) return AuthenticateResult.NoResult();
+        var matches = apiOptions.AdminKey.Length > 0 && CryptographicOperations.FixedTimeEquals(SHA256.HashData(Encoding.UTF8.GetBytes(raw)),
             SHA256.HashData(Encoding.UTF8.GetBytes(apiOptions.AdminKey)));
-        if (!matches) return Task.FromResult(AuthenticateResult.Fail("Invalid admin key."));
-        var identity = new ClaimsIdentity([new Claim(ClaimTypes.NameIdentifier, "admin")], SchemeName);
-        return Task.FromResult(AuthenticateResult.Success(new AuthenticationTicket(new ClaimsPrincipal(identity), SchemeName)));
+        if (matches)
+        {
+            var identity = new ClaimsIdentity([new Claim(ClaimTypes.NameIdentifier, "bootstrap"),
+                new Claim(ClaimTypes.Name, "bootstrap"), new Claim(ClaimTypes.Role, OperatorRoles.Administrator)], SchemeName);
+            return AuthenticateResult.Success(new AuthenticationTicket(new ClaimsPrincipal(identity), SchemeName));
+        }
+        var account = raw.StartsWith("llmp_op_", StringComparison.Ordinal)
+            ? await store.AuthenticateOperatorAsync(ApiKeyHasher.Hash(raw), time.GetUtcNow(), Context.RequestAborted) : null;
+        if (account is null) return AuthenticateResult.Fail("Invalid operator session.");
+        var operatorIdentity = new ClaimsIdentity([new Claim(ClaimTypes.NameIdentifier, account.Id.ToString()),
+            new Claim(ClaimTypes.Name, account.Username), new Claim(ClaimTypes.Role, account.Role)], SchemeName);
+        return AuthenticateResult.Success(new AuthenticationTicket(new ClaimsPrincipal(operatorIdentity), SchemeName));
     }
     protected override Task HandleChallengeAsync(AuthenticationProperties properties) => ApiErrors.WriteAsync(Context,
-        apiOptions.AdminKey.Length == 0 ? new GatewayException("The administrative API is disabled.", "not_found", 404)
-            : new GatewayException("A valid administrative API key is required.", "invalid_admin_key", 401));
+        new GatewayException("An operator session or administrative key is required.", "invalid_admin_key", 401));
+    protected override Task HandleForbiddenAsync(AuthenticationProperties properties) => ApiErrors.WriteAsync(Context,
+        new GatewayException("Your operator role does not allow this action.", "permission_denied", 403));
 }

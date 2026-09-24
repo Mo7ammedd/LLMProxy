@@ -25,7 +25,16 @@ public static class ApiErrors
         if (context.RequestAborted.IsCancellationRequested) return;
         if (context.Response.HasStarted)
         {
-            await context.Response.WriteAsync($"data: {OpenAi(error).ToJsonString()}\n\n", context.RequestAborted);
+            var native = context.Items.TryGetValue(RequestContext.ResponseSequenceItem, out var sequence);
+            var payload = native ? new JsonObject
+            {
+                ["type"] = "error",
+                ["code"] = error.Code,
+                ["message"] = error.Message,
+                ["param"] = error.Param,
+                ["sequence_number"] = (long)sequence!
+            } : OpenAi(error);
+            await context.Response.WriteAsync($"{(native ? "event: error\n" : "")}data: {payload.ToJsonString()}\n\n", context.RequestAborted);
             await context.Response.Body.FlushAsync(context.RequestAborted);
             return;
         }
@@ -48,6 +57,7 @@ public static class RequestContext
 {
     public static object RequestIdItem { get; } = new();
     public static object ApiKeyItem { get; } = new();
+    public static object ResponseSequenceItem { get; } = new();
     public static Guid RequestId(this HttpContext context) => (Guid)context.Items[RequestIdItem]!;
     public static ApiKey ApiKey(this HttpContext context) => (ApiKey)context.Items[ApiKeyItem]!;
 }

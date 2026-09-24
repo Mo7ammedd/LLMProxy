@@ -26,10 +26,15 @@ public static class ServiceCollectionExtensions
         services.AddAuthentication(GatewayKeyAuthenticationHandler.SchemeName)
             .AddScheme<AuthenticationSchemeOptions, GatewayKeyAuthenticationHandler>(GatewayKeyAuthenticationHandler.SchemeName, _ => { })
             .AddScheme<AuthenticationSchemeOptions, AdminKeyAuthenticationHandler>(AdminKeyAuthenticationHandler.SchemeName, _ => { });
-        services.AddAuthorizationBuilder().AddPolicy("Admin", policy => policy
-            .AddAuthenticationSchemes(AdminKeyAuthenticationHandler.SchemeName).RequireAuthenticatedUser());
+        services.AddAuthorizationBuilder()
+            .AddPolicy("Admin", policy => policy.AddAuthenticationSchemes(AdminKeyAuthenticationHandler.SchemeName)
+                .RequireRole(OperatorRoles.Administrator, OperatorRoles.Operator, OperatorRoles.Auditor))
+            .AddPolicy("AdminWrite", policy => policy.AddAuthenticationSchemes(AdminKeyAuthenticationHandler.SchemeName)
+                .RequireRole(OperatorRoles.Administrator, OperatorRoles.Operator))
+            .AddPolicy("AdminOperators", policy => policy.AddAuthenticationSchemes(AdminKeyAuthenticationHandler.SchemeName)
+                .RequireRole(OperatorRoles.Administrator));
         services.AddCors(cors => cors.AddDefaultPolicy(policy => policy.WithOrigins(options.AllowedOrigins)
-            .AllowAnyHeader().WithMethods("GET", "POST", "PUT").WithExposedHeaders("X-Request-Id", "Retry-After")));
+            .AllowAnyHeader().WithMethods("GET", "POST", "PUT", "DELETE").WithExposedHeaders("X-Request-Id", "Retry-After")));
         services.AddHttpsRedirection(https => https.HttpsPort = options.HttpsPort);
         if (options.TrustedProxies.Length > 0)
         {
@@ -65,18 +70,20 @@ public static class ServiceCollectionExtensions
                     "http_error", status.HttpContext.Response.StatusCode));
         });
         app.UseCors();
+        app.UseMiddleware<RequestDeadlineMiddleware>();
         app.UseAuthentication();
+        app.UseMiddleware<AuditMiddleware>();
         app.UseAuthorization();
         app.MapLlmProxy();
         return app;
     }
 }
 
-public sealed class ProviderConfigurationHealthCheck(IModelRegistry registry, IEnumerable<ILlmProvider> providers, IModelPricing pricing) : IHealthCheck
+public sealed class ProviderConfigurationHealthCheck(IModelRegistry registry, IProviderCatalog catalog, IModelPricing pricing) : IHealthCheck
 {
     public Task<HealthCheckResult> CheckHealthAsync(HealthCheckContext context, CancellationToken cancellationToken = default)
     {
-        var available = providers.Where(x => x.IsConfigured).Select(x => x.Name).ToHashSet(StringComparer.Ordinal);
+        var available = catalog.Providers.Where(x => x.IsConfigured).Select(x => x.Name).ToHashSet(StringComparer.Ordinal);
         try
         {
             var availableModels = 0;

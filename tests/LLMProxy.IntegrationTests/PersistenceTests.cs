@@ -47,12 +47,23 @@ public sealed class PersistenceTests
         await AssertIdempotentFinalization(fixture);
     }
 
-    [Fact]
-    public async Task Expired_reservations_become_conservative_usage_records()
+    [Theory]
+    [InlineData("chat")]
+    [InlineData("embeddings")]
+    [InlineData("responses")]
+    public Task Expired_reservations_become_conservative_usage_records(string operation)
+        => AssertRecoveredOperation(false, operation);
+
+    [PostgresFact]
+    public Task Postgres_recovery_preserves_the_original_operation()
+        => AssertRecoveredOperation(true, "embeddings");
+
+    private static async Task AssertRecoveredOperation(bool postgres, string operation)
     {
-        await using var fixture = await StoreFixture.CreateAsync();
+        await using var fixture = await StoreFixture.CreateAsync(postgres);
         var key = await fixture.KeyAsync();
         var reservation = StoreFixture.Reservation(key);
+        reservation.Operation = operation;
         reservation.ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(-1);
         Assert.True(await fixture.Store.TryReserveAsync(reservation, default));
         Assert.Equal(1, await fixture.Store.RecoverExpiredReservationsAsync(DateTimeOffset.UtcNow, default));
@@ -63,6 +74,7 @@ public sealed class PersistenceTests
         Assert.Equal(1000, updated.SpentUnits);
         var usage = Assert.Single(await fixture.Store.ListUsageAsync(key.Id, 100, default));
         Assert.Equal("abandoned", usage.Status);
+        Assert.Equal(operation, usage.Operation);
         Assert.True(usage.UsageEstimated);
     }
 

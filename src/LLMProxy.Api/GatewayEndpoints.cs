@@ -15,10 +15,10 @@ public static class GatewayEndpoints
     public static IEndpointRouteBuilder MapLlmProxy(this IEndpointRouteBuilder endpoints)
     {
         var api = endpoints.MapGroup("/v1").RequireAuthorization();
-        api.MapGet("/models", async (HttpContext http, IModelRegistry registry, GatewayService gateway, IEnumerable<ILlmProvider> providers) =>
+        api.MapGet("/models", async (HttpContext http, IModelRegistry registry, GatewayService gateway, IProviderCatalog catalog) =>
         {
             await gateway.CheckRateLimitAsync(http.ApiKey(), null, http.RequestAborted);
-            var available = providers.Where(provider => provider.IsConfigured).Select(provider => provider.Name).ToHashSet(StringComparer.Ordinal);
+            var available = catalog.Providers.Where(provider => provider.IsConfigured).Select(provider => provider.Name).ToHashSet(StringComparer.Ordinal);
             return Results.Json(new
             {
                 @object = "list",
@@ -29,7 +29,7 @@ public static class GatewayEndpoints
         api.MapPost("/chat/completions", async (HttpContext http, GatewayService gateway) =>
         {
             var request = await ReadAsync<LlmRequest>(http);
-            var context = new GatewayRequestContext(http.RequestId(), http.ApiKey());
+            var context = new GatewayRequestContext(http.RequestId(), http.ApiKey(), RequestDeadlineMiddleware.ClientCancellation(http));
             if (!request.Stream)
             {
                 var response = await gateway.CompleteAsync(request, context, http.RequestAborted);
@@ -62,17 +62,21 @@ public static class GatewayEndpoints
         {
             var result = await keys.CreateAsync(await ReadAsync<CreateApiKey>(http), http.RequestAborted);
             return Results.Json(result, LlmJson.Options, statusCode: 201);
-        });
+        }).RequireAuthorization("AdminWrite");
         admin.MapGet("/keys", async (HttpContext http, IGatewayStore store, int? limit) => Results.Json(
             (await store.ListKeysAsync(limit ?? 100, http.RequestAborted)).Select(ApiKeySummary.From), LlmJson.Options));
         admin.MapPut("/keys/{id:guid}", async (Guid id, HttpContext http, ApiKeyService keys) => Results.Json(
-            await keys.UpdateAsync(id, await ReadAsync<UpdateApiKey>(http), http.RequestAborted), LlmJson.Options));
+            await keys.UpdateAsync(id, await ReadAsync<UpdateApiKey>(http), http.RequestAborted), LlmJson.Options)).RequireAuthorization("AdminWrite");
         admin.MapGet("/usage", async (HttpContext http, IGatewayStore store, Guid? api_key_id, int? limit) => Results.Json(
             await store.ListUsageAsync(api_key_id, limit ?? 100, http.RequestAborted), LlmJson.Options));
 
         endpoints.MapHealthChecks("/health", HealthOptions("ready"));
         endpoints.MapHealthChecks("/health/ready", HealthOptions("ready"));
         endpoints.MapHealthChecks("/health/live", HealthOptions("live"));
+        endpoints.MapManagement();
+        endpoints.MapProtocols();
+        endpoints.MapBatches();
+        endpoints.MapDashboard();
         return endpoints;
     }
 
@@ -97,7 +101,7 @@ public static class GatewayEndpoints
         return result;
     }
 
-    private static async Task<T> ReadAsync<T>(HttpContext http)
+    internal static async Task<T> ReadAsync<T>(HttpContext http)
     {
         if (!http.Request.HasJsonContentType()) throw new GatewayException("Content-Type must be application/json.", "invalid_content_type", 415);
         return await JsonSerializer.DeserializeAsync<T>(http.Request.Body, LlmJson.Options, http.RequestAborted)

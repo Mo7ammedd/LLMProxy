@@ -5,10 +5,14 @@ using LLMProxy.Domain;
 
 namespace LLMProxy.Providers;
 
-public abstract class OpenAiCompatibleProvider(ProviderHttpTransport transport, ProviderConnectionOptions connection) : ILlmProvider
+public abstract partial class OpenAiCompatibleProvider(ProviderHttpTransport transport, ProviderConnectionOptions connection) : ILlmProvider
 {
     public abstract string Name { get; }
     public bool IsConfigured => connection.IsConfigured;
+    public ModelCapabilities Capabilities => ProviderCapabilities.For(Name);
+    protected virtual ProviderConnectionOptions? KeyConnection => connection;
+    protected virtual string ApiKeyHeader => "Authorization";
+    protected virtual string ApiKeyPrefix => "Bearer ";
     protected virtual string TokenLimitParameter => "max_completion_tokens";
     protected virtual bool RequestStreamUsage => true;
     protected virtual bool SupportsDeveloperRole => true;
@@ -103,7 +107,8 @@ public abstract class OpenAiCompatibleProvider(ProviderHttpTransport transport, 
     {
         var payload = BuildPayload(request);
         var headers = await HeadersAsync(cancellationToken);
-        return await transport.SendAsync(Name, Endpoint(request), payload, headers, request.Stream, cancellationToken);
+        return await transport.SendAsync(Name, Endpoint(request), payload, headers, request.Stream, cancellationToken,
+            KeyConnection, ApiKeyHeader, ApiKeyPrefix);
     }
 }
 
@@ -117,6 +122,8 @@ public sealed class AzureOpenAiProvider(ProviderHttpTransport transport, Provide
     : OpenAiCompatibleProvider(transport, options.AzureOpenAI)
 {
     public override string Name => "azure";
+    protected override string ApiKeyHeader => "api-key";
+    protected override string ApiKeyPrefix => "";
     protected override Uri Endpoint(LlmRequest request) => options.AzureOpenAI.Endpoint(
         $"openai/deployments/{Uri.EscapeDataString(request.Model)}/chat/completions?api-version={Uri.EscapeDataString(options.AzureOpenAI.ApiVersion)}");
     protected override Dictionary<string, string> Headers() => new() { ["api-key"] = options.AzureOpenAI.ApiKey };

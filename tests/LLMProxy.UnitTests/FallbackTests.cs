@@ -105,6 +105,26 @@ public sealed class FallbackTests
         Assert.Equal(1024, fixture.Store.Usage[0].OutputTokens);
     }
 
+    [Fact]
+    public async Task Deadline_during_stream_delivery_records_timeout_when_the_client_is_connected()
+    {
+        using var fixture = new Fixture();
+        using var deadline = new CancellationTokenSource();
+        var context = fixture.Context with { ClientCancellation = CancellationToken.None };
+        await using (var stream = fixture.Service.StreamAsync(TestData.Request(true), context, deadline.Token).GetAsyncEnumerator())
+        {
+            Assert.True(await stream.MoveNextAsync());
+            deadline.Cancel();
+        }
+        var usage = Assert.Single(fixture.Store.Usage);
+        Assert.Equal("error", usage.Status);
+        Assert.Equal("request_timeout", usage.ErrorCode);
+        Assert.Equal(1024, usage.OutputTokens);
+        Assert.True(usage.UsageEstimated);
+        Assert.Empty(fixture.Store.Reservations);
+        Assert.Equal(0, fixture.Second.Calls);
+    }
+
     private sealed class Fixture : IDisposable
     {
         public TestProvider First { get; } = new("first");

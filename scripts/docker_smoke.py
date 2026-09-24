@@ -4,7 +4,7 @@ import subprocess
 import urllib.error
 import uuid
 from smoke_common import (ADMIN_KEY, KEY, PROVIDER_NAMES, ROOT, check_http, check_persisted_usage,
-                          check_sdks, isolated_environment, provider_environment, request, wait_ready)
+                          check_sdks, check_protocol_sdks, isolated_environment, provider_environment, request, wait_ready)
 
 
 def published_url(container, internal_port):
@@ -106,6 +106,7 @@ def main():
         standalone_url = published_url(standalone, 8080)
         wait_ready(standalone_url)
         assert check_persisted_usage(standalone_url) == standalone_count
+        check_protocol_sdks(standalone_url)
         subprocess.run(["docker", "exec", standalone, "dotnet", "LLMProxy.Server.dll", "healthcheck"], check=True)
         compose("stop", "--timeout", "60", "llmproxy")
         inspection = json.loads(subprocess.check_output(["docker", "inspect", container], text=True))[0]
