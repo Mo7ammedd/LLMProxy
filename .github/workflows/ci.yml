@@ -81,7 +81,7 @@ jobs:
       - run: npm ci --prefix examples/typescript --ignore-scripts
       - run: dotnet restore examples/csharp --locked-mode
       - run: dotnet build examples/csharp --configuration Release --no-restore
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
       - name: Build test image
         uses: docker/build-push-action@v6
         with:
