@@ -1,0 +1,81 @@
+name: llmproxy
+
+services:
+  llmproxy:
+    image: ${LLMPROXY_IMAGE:-ghcr.io/mo7ammedd/llmproxy:latest}
+    build:
+      context: .
+    ports:
+      - "${LLMPROXY_PORT:-4000}:4000"
+    environment:
+      ASPNETCORE_HTTP_PORTS: "4000"
+      LLMProxy__Storage__Mode: PostgreSql
+      LLMProxy__Storage__AutoMigrate: "${LLMPROXY_AUTO_MIGRATE:-true}"
+      ConnectionStrings__Postgres: "Host=postgres;Port=5432;Database=llmproxy;Username=llmproxy;Password=${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}"
+      ConnectionStrings__Redis: "redis:6379,password=${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env},abortConnect=false"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+      GEMINI_API_KEY: "${GEMINI_API_KEY:-}"
+      AZURE_OPENAI_API_KEY: "${AZURE_OPENAI_API_KEY:-}"
+      AZURE_OPENAI_ENDPOINT: "${AZURE_OPENAI_ENDPOINT:-}"
+      AZURE_OPENAI_API_VERSION: "${AZURE_OPENAI_API_VERSION:-2024-10-21}"
+      LLMPROXY_BOOTSTRAP_KEY: "${LLMPROXY_BOOTSTRAP_KEY:-}"
+      LLMPROXY_BOOTSTRAP_OWNER: "${LLMPROXY_BOOTSTRAP_OWNER:-bootstrap}"
+      LLMPROXY_ADMIN_KEY: "${LLMPROXY_ADMIN_KEY:-}"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "${OTEL_EXPORTER_OTLP_ENDPOINT:-}"
+    volumes:
+      - application_data:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks: [gateway]
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 60s
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: llmproxy
+      POSTGRES_USER: llmproxy
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U llmproxy -d llmproxy"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [gateway]
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    environment:
+      REDIS_PASSWORD: "${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}"
+    command: [/bin/sh, -c, 'exec redis-server --appendonly yes --appendfsync everysec --requirepass "$$REDIS_PASSWORD"']
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: [CMD-SHELL, 'REDISCLI_AUTH="$$REDIS_PASSWORD" redis-cli ping | grep -q PONG']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [gateway]
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+  application_data:
+
+networks:
+  gateway:
+    driver: bridge

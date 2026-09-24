@@ -1,0 +1,19 @@
+services:
+  llmproxy:
+    image: llmproxy:smoke
+    environment:
+      LLMProxy__Providers__OpenAI__BaseUrl: http://mock:9000/v1
+      LLMProxy__Providers__OpenAI__AllowInsecureHttp: "true"
+      LLMProxy__Providers__Resilience__RetryCount: "0"
+    depends_on:
+      mock:
+        condition: service_started
+  mock:
+    image: python:3.12-alpine
+    command: [python, /mock/server.py]
+    volumes:
+      - ./tests/docker/mock_server.py:/mock/server.py:ro
+    networks: [gateway]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]

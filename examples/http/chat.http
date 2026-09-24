@@ -1,0 +1,20 @@
+@baseUrl = http://localhost:4000
+# Set gatewayKey in your HTTP client's private environment, never in this file.
+
+### Public model aliases
+GET {{baseUrl}}/v1/models
+Authorization: Bearer {{gatewayKey}}
+
+### Normal completion
+POST {{baseUrl}}/v1/chat/completions
+Authorization: Bearer {{gatewayKey}}
+Content-Type: application/json
+
+{"model":"fast","messages":[{"role":"user","content":"Hello"}]}
+
+### Streaming completion
+POST {{baseUrl}}/v1/chat/completions
+Authorization: Bearer {{gatewayKey}}
+Content-Type: application/json
+
+{"model":"fast","messages":[{"role":"user","content":"Hello"}],"stream":true,"stream_options":{"include_usage":true}}

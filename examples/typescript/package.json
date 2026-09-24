@@ -1,0 +1,8 @@
+{
+  "name": "llmproxy-client-example",
+  "private": true,
+  "type": "module",
+  "scripts": { "start": "node chat.ts" },
+  "dependencies": { "openai": "7.23.0" },
+  "engines": { "node": ">=24" }
+}
