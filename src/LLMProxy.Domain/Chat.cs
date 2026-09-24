@@ -21,6 +21,11 @@ public sealed record LlmRequest
     public int? Seed { get; init; }
     public string? User { get; init; }
     public int? N { get; init; }
+    public string? ReasoningEffort { get; init; }
+    public int? ThinkingBudgetTokens { get; init; }
+    [JsonIgnore] public GatewayOperation Operation { get; init; }
+    [JsonIgnore] public long? InputTokenEstimate { get; init; }
+    [JsonIgnore] public ModelCapability RequiredCapabilities { get; init; }
     [JsonExtensionData] public Dictionary<string, JsonElement>? Extra { get; init; }
 
     [JsonIgnore] public int OutputTokenLimit => MaxCompletionTokens ?? MaxTokens ?? 1024;
@@ -67,9 +72,12 @@ public sealed record TokenUsage(
     [property: JsonPropertyName("completion_tokens")] long OutputTokens,
     [property: JsonPropertyName("total_tokens")] long TotalTokens)
 {
+    public PromptTokenDetails? PromptTokensDetails { get; init; }
     public static TokenUsage Zero { get; } = new(0, 0, 0);
     public static TokenUsage From(long input, long output) => new(input, output, checked(input + output));
 }
+
+public sealed record PromptTokenDetails(long CachedTokens = 0, long CacheCreationTokens = 0);
 
 public sealed record ChatChoice(int Index, ChatMessage Message, string FinishReason);
 

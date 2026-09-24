@@ -119,3 +119,16 @@ def check_persisted_usage(base):
     assert len(usage) >= 2
     assert all(row["total_tokens"] == 5 and row["status"] == "success" for row in usage)
     return len(usage)
+
+
+def check_protocol_sdks(base):
+    environment = isolated_environment()
+    environment.update(LLMPROXY_BASE_URL=base + "/v1", LLMPROXY_API_KEY=KEY)
+    for name, command, expected in [
+        ("Python", [sys.executable, "examples/python/protocols.py"], ["Embedding dimensions: 2", "Hello", "Hello", "Batch completed: 1"]),
+        ("TypeScript", ["node", "examples/typescript/protocols.ts"], ["Embedding dimensions: 2", "Hello", "Hello"]),
+    ]:
+        result = subprocess.run(command, cwd=ROOT, env=environment, capture_output=True, text=True, timeout=90)
+        if result.returncode or result.stdout.strip().splitlines() != expected:
+            raise AssertionError(f"{name} protocol SDK check failed: {result.stderr[-4000:]}")
+        print(f"{name} SDK: embeddings and Responses passed" + ("; files and batches passed." if name == "Python" else "."), flush=True)

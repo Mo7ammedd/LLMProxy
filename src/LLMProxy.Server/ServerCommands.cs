@@ -30,6 +30,12 @@ public static class ServerCommands
         if (args is ["migrate"]) { Console.WriteLine("Database migrations applied."); return 0; }
         var keys = services.GetRequiredService<ApiKeyService>();
         var store = services.GetRequiredService<IGatewayStore>();
+        if (args is ["reservations", "recover"])
+        {
+            var count = await store.RecoverExpiredReservationsAsync(DateTimeOffset.UtcNow, CancellationToken.None);
+            Console.WriteLine(JsonSerializer.Serialize(new { recovered = count }));
+            return 0;
+        }
         if (args is ["keys", "list"])
         {
             Console.WriteLine(JsonSerializer.Serialize((await store.ListKeysAsync(1000, CancellationToken.None)).Select(ApiKeySummary.From), LlmJson.Options));
@@ -42,7 +48,10 @@ public static class ServerCommands
                 (values.GetValueOrDefault("models") ?? "*").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
                 int.Parse(values.GetValueOrDefault("rpm") ?? "60", CultureInfo.InvariantCulture),
                 values.TryGetValue("token-limit", out var tokens) ? long.Parse(tokens, CultureInfo.InvariantCulture) : null,
-                values.TryGetValue("budget", out var budget) ? decimal.Parse(budget, CultureInfo.InvariantCulture) : null);
+                values.TryGetValue("budget", out var budget) ? decimal.Parse(budget, CultureInfo.InvariantCulture) : null,
+                values.TryGetValue("expires-at", out var expires) ? DateTimeOffset.Parse(expires, CultureInfo.InvariantCulture) : null,
+                values.TryGetValue("monthly-token-limit", out var monthlyTokens) ? long.Parse(monthlyTokens, CultureInfo.InvariantCulture) : null,
+                values.TryGetValue("monthly-budget", out var monthlyBudget) ? decimal.Parse(monthlyBudget, CultureInfo.InvariantCulture) : null);
             var created = await keys.CreateAsync(command, CancellationToken.None);
             // Intentional one-time key disclosure to the operator's terminal; never emitted through logging.
             Console.WriteLine(JsonSerializer.Serialize(created, LlmJson.Options));
@@ -53,11 +62,12 @@ public static class ServerCommands
             var key = await store.FindKeyByIdAsync(keyId, CancellationToken.None);
             if (key is null) { Console.Error.WriteLine("API key not found."); return 1; }
             var result = await keys.UpdateAsync(keyId, new UpdateApiKey(false, key.AllowedModels, key.RequestsPerMinute,
-                key.TokenLimit, key.BudgetUnits is { } budget ? Money.FromUnits(budget) : null), CancellationToken.None);
+                key.TokenLimit, key.BudgetUnits is { } budget ? Money.FromUnits(budget) : null, key.ExpiresAt,
+                key.MonthlyTokenLimit, key.MonthlyBudgetUnits is { } monthly ? Money.FromUnits(monthly) : null), CancellationToken.None);
             Console.WriteLine(JsonSerializer.Serialize(result, LlmJson.Options));
             return 0;
         }
-        Console.Error.WriteLine("Usage: keys create [--owner name] [--models fast,reasoning] [--rpm 60] [--token-limit N] [--budget USD] | keys list | keys disable ID | migrate");
+        Console.Error.WriteLine("Usage: keys create [--owner name] [--models fast,reasoning] [--rpm 60] [--token-limit N] [--budget USD] [--expires-at ISO_DATE] [--monthly-token-limit N] [--monthly-budget USD] | keys list | keys disable ID | migrate | reservations recover");
         return 1;
     }
 
@@ -66,7 +76,8 @@ public static class ServerCommands
         var result = new Dictionary<string, string>(StringComparer.Ordinal);
         for (var index = 0; index < args.Length; index += 2)
         {
-            if (index + 1 >= args.Length || args[index] is not ("--owner" or "--models" or "--rpm" or "--token-limit" or "--budget"))
+            if (index + 1 >= args.Length || args[index] is not ("--owner" or "--models" or "--rpm" or "--token-limit" or "--budget"
+                or "--expires-at" or "--monthly-token-limit" or "--monthly-budget"))
                 throw new GatewayException("Unknown command option or missing value.", "invalid_command");
             result.Add(args[index][2..], args[index + 1]);
         }

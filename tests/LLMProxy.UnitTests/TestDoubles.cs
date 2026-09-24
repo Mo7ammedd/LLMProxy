@@ -8,6 +8,7 @@ internal sealed class TestProvider(string name, bool configured = true) : ILlmPr
 {
     public string Name => name;
     public bool IsConfigured => configured;
+    public ModelCapabilities Capabilities { get; set; } = new();
     public int Calls { get; private set; }
     public Func<LlmRequest, CancellationToken, Task<LlmResponse>>? Complete { get; set; }
     public bool FailBeforeStream { get; set; }

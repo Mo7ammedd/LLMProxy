@@ -5,17 +5,21 @@ using LLMProxy.Domain;
 namespace LLMProxy.Application;
 
 public sealed record CreateApiKey(string Owner, string[] AllowedModels, int RequestsPerMinute = 60,
-    long? TokenLimit = null, decimal? SpendingBudget = null);
+    long? TokenLimit = null, decimal? SpendingBudget = null, DateTimeOffset? ExpiresAt = null,
+    long? MonthlyTokenLimit = null, decimal? MonthlySpendingBudget = null);
 public sealed record UpdateApiKey(bool Enabled, string[] AllowedModels, int RequestsPerMinute = 60,
-    long? TokenLimit = null, decimal? SpendingBudget = null);
+    long? TokenLimit = null, decimal? SpendingBudget = null, DateTimeOffset? ExpiresAt = null,
+    long? MonthlyTokenLimit = null, decimal? MonthlySpendingBudget = null);
 public sealed record ApiKeySummary(Guid Id, string Prefix, string Owner, bool Enabled, string[] AllowedModels,
     int RequestsPerMinute, long? TokenLimit, long UsedTokens, long ReservedTokens, decimal? SpendingBudget,
-    decimal Spent, decimal ReservedCost, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt, DateTimeOffset? LastUsedAt)
+    decimal Spent, decimal ReservedCost, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt, DateTimeOffset? LastUsedAt,
+    DateTimeOffset? ExpiresAt = null, long? MonthlyTokenLimit = null, decimal? MonthlySpendingBudget = null)
 {
     public static ApiKeySummary From(ApiKey key) => new(key.Id, key.KeyPrefix, key.Owner, key.Enabled,
         key.AllowedModels, key.RequestsPerMinute, key.TokenLimit, key.UsedTokens, key.ReservedTokens,
         key.BudgetUnits is { } budget ? Money.FromUnits(budget) : null, Money.FromUnits(key.SpentUnits),
-        Money.FromUnits(key.ReservedUnits), key.CreatedAt, key.UpdatedAt, key.LastUsedAt);
+        Money.FromUnits(key.ReservedUnits), key.CreatedAt, key.UpdatedAt, key.LastUsedAt, key.ExpiresAt,
+        key.MonthlyTokenLimit, key.MonthlyBudgetUnits is { } monthly ? Money.FromUnits(monthly) : null);
 }
 public sealed record CreatedApiKey(string Key, ApiKeySummary Details);
 
@@ -40,7 +44,7 @@ public sealed class ApiKeyService(IGatewayStore store, IModelRegistry registry, 
         if (!ApiKeyHasher.IsValidFormat(raw)) return null;
         var key = await store.FindKeyAsync(ApiKeyHasher.Hash(raw), cancellationToken);
         var matches = ApiKeyHasher.Matches(raw, key?.KeyHash ?? new string('0', 64));
-        if (!matches || key is not { Enabled: true }) return null;
+        if (!matches || key is not { Enabled: true } || key.ExpiresAt <= time.GetUtcNow()) return null;
         await store.TouchKeyAsync(key.Id, time.GetUtcNow(), cancellationToken);
         return key;
     }
@@ -51,6 +55,8 @@ public sealed class ApiKeyService(IGatewayStore store, IModelRegistry registry, 
         if (string.IsNullOrWhiteSpace(command.Owner) || command.Owner.Length > 128 || command.Owner.Any(char.IsControl))
             throw new GatewayException("owner must contain 1–128 printable characters.", "invalid_owner", param: "owner");
         Validate(command.AllowedModels, command.RequestsPerMinute, command.TokenLimit, command.SpendingBudget);
+        Validate(command.AllowedModels, command.RequestsPerMinute, command.MonthlyTokenLimit, command.MonthlySpendingBudget);
+        if (command.ExpiresAt <= time.GetUtcNow()) throw new GatewayException("expires_at must be in the future.", "invalid_expiry");
         var raw = suppliedKey ?? ApiKeyHasher.Generate();
         if (!ApiKeyHasher.IsValidFormat(raw))
             throw new GatewayException("Keys must start with llmp_sk_ and contain at least 32 random URL-safe characters.", "invalid_key");
@@ -66,6 +72,10 @@ public sealed class ApiKeyService(IGatewayStore store, IModelRegistry registry, 
             BudgetUnits = command.SpendingBudget is { } budget ? Money.ToUnits(budget) : null,
             CreatedAt = now,
             UpdatedAt = now
+            ,
+            ExpiresAt = command.ExpiresAt,
+            MonthlyTokenLimit = command.MonthlyTokenLimit,
+            MonthlyBudgetUnits = command.MonthlySpendingBudget is { } monthly ? Money.ToUnits(monthly) : null
         };
         await store.CreateKeyAsync(key, cancellationToken);
         return new CreatedApiKey(raw, ApiKeySummary.From(key));
@@ -74,12 +84,25 @@ public sealed class ApiKeyService(IGatewayStore store, IModelRegistry registry, 
     public async Task<ApiKeySummary> UpdateAsync(Guid id, UpdateApiKey command, CancellationToken cancellationToken)
     {
         Validate(command.AllowedModels, command.RequestsPerMinute, command.TokenLimit, command.SpendingBudget);
+        Validate(command.AllowedModels, command.RequestsPerMinute, command.MonthlyTokenLimit, command.MonthlySpendingBudget);
         var policy = new ApiKeyPolicy(command.Enabled, command.AllowedModels.Distinct(StringComparer.Ordinal).ToArray(),
             command.RequestsPerMinute, command.TokenLimit,
-            command.SpendingBudget is { } budget ? Money.ToUnits(budget) : null);
+            command.SpendingBudget is { } budget ? Money.ToUnits(budget) : null, command.ExpiresAt,
+            command.MonthlyTokenLimit, command.MonthlySpendingBudget is { } monthly ? Money.ToUnits(monthly) : null);
         var key = await store.UpdateKeyAsync(id, policy, time.GetUtcNow(), cancellationToken)
             ?? throw new GatewayException("API key not found.", "key_not_found", 404);
         return ApiKeySummary.From(key);
+    }
+
+    public async Task<CreatedApiKey> RotateAsync(Guid id, int graceSeconds, CancellationToken cancellationToken)
+    {
+        if (graceSeconds is < 0 or > 86400) throw new GatewayException("Rotation grace must be 0–86400 seconds.", "invalid_rotation");
+        var raw = ApiKeyHasher.Generate();
+        var now = time.GetUtcNow();
+        var key = await ((IKeyLifecycleStore)store).RotateKeyAsync(id, ApiKeyHasher.Hash(raw), raw[..16],
+            now, now.AddSeconds(graceSeconds), cancellationToken)
+            ?? throw new GatewayException("API key not found.", "key_not_found", 404);
+        return new CreatedApiKey(raw, ApiKeySummary.From(key));
     }
 
     private void Validate(string[] models, int rpm, long? tokens, decimal? budget)

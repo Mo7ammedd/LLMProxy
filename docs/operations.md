@@ -58,7 +58,7 @@ location / {
 }
 ```
 
-Protect `/admin/*` with network policy or an operator-only ingress in addition to its separate bearer secret. Set explicit `AllowedOrigins` only for browser applications that should call the gateway. TLS termination at the ingress works without application-level redirects; if redirects are enabled, also configure health probes appropriately.
+Protect `/admin` and `/admin/*` with network policy or an operator-only ingress in addition to operator sessions or the bootstrap bearer secret. Set explicit `AllowedOrigins` only for browser applications that should call the gateway. TLS termination at the ingress works without application-level redirects; if redirects are enabled, also configure health probes appropriately.
 
 ## Observability
 
@@ -80,7 +80,7 @@ Activity source and meter: `LLMProxy`. Spans include the ASP.NET request, gatewa
 | `llmproxy.estimated_cost` | Estimated USD consumption |
 | `llmproxy.fallbacks` | Provider fallback count |
 
-ASP.NET Core and HttpClient instrumentation additionally capture HTTP duration/status/connection metrics, including authentication and admission failures. HTTP retries inside one provider attempt can be inspected through HttpClient telemetry. Request IDs are log/span fields, not metric labels, to avoid high cardinality.
+ASP.NET Core and HttpClient instrumentation capture HTTP duration/status/connection metrics, including authentication and admission failures. Individual HTTP retries and fallback attempts are also available at `/admin/usage/{id}/attempts`; rejected requests and management changes have durable audit rows. Request IDs are log/span fields, not metric labels, to avoid high cardinality.
 
 ## Migrations and upgrades
 
@@ -99,24 +99,51 @@ Pin a version or image digest instead of `latest` for reproducible deployments. 
 
 ## Backups and retention
 
-PostgreSQL stores hashes/policies, counters, reservations and usage. Back it up with your usual encrypted PostgreSQL backup strategy and test restoration. For the Compose default:
+PostgreSQL stores keys/policies, operators/sessions, counters, reservations, usage, attempts, reconciliation receipts, audit, batches and uploaded/output content. Back it up with your usual encrypted PostgreSQL backup strategy and test restoration. For the Compose default:
 
 ```bash
 docker compose exec -T postgres pg_dump -U llmproxy llmproxy > llmproxy-backup.sql
 ```
 
-Treat backups as sensitive: they contain account ownership and activity metadata even though prompts and raw keys are absent. Redis uses AOF with `appendfsync everysec`; a sudden Redis failure may lose a small recent rate-limit window. Lifetime quotas remain in PostgreSQL. Use a highly available Redis deployment and stronger durability if your RPM policy requires it.
+Treat backups as sensitive: batch files and results contain request/response bodies, alongside account and activity metadata. Raw gateway keys and operator passwords are not persisted. Redis uses AOF with `appendfsync everysec`; a sudden Redis failure may lose a recent rate-limit window or concurrency lease. Lifetime/monthly quotas remain in PostgreSQL. Use a highly available Redis deployment and stronger durability if your admission policy requires it.
 
-The MVP does not automatically delete usage. Apply an explicit retention policy in PostgreSQL according to your needs. Removing old usage rows does not reset per-key consumed totals. Do not delete active reservations or reset counters to resolve transient errors. Investigate `abandoned` records and reconcile conservatively charged requests before making controlled administrative adjustments.
+Usage and attempts default to 90 days, audit to 365 days, and finished batches/results and unreferenced files to seven days. Configure `LLMProxy:Storage:UsageRetentionDays`, `AuditRetentionDays` and `BatchRetentionDays`; zero disables usage/audit deletion. Expired sessions and rotation credentials are pruned automatically. Key/monthly consumption and reconciliation receipts are retained. Import invoices before the related usage/attempt rows expire. Do not delete active reservations or reset counters to resolve transient errors.
 
 For standalone SQLite, stop the container before copying the database or use a proper SQLite online backup. Copying only a live `.db` file while ignoring its WAL can produce an inconsistent backup.
 
 ## Failure interpretation
 
-- Redis unavailable: chat/list admissions fail closed with 503; liveness remains healthy.
+- Redis unavailable: inference/list admissions and concurrency control fail closed with 503; liveness remains healthy.
 - PostgreSQL unavailable: authentication/accounting cannot proceed; readiness reports the storage dependency. A usage finalization failure retains its reservation for recovery.
 - All providers failing: the request returns a sanitized upstream error after configured retry/fallback. This does not make liveness fail.
 - Interrupted streams or unknown outcomes: inspect `usage_estimated` and `error_code`; estimates may consume the reserved ceiling to avoid cancellation-based quota bypass.
-- Insufficient quota on a short prompt: lower the output cap or increase the lifetime allowance; admission includes conservative input estimation and the full output ceiling.
+- Insufficient quota on a short prompt: inspect both lifetime and monthly allowances; admission includes conservative input estimation and the full output ceiling.
+- A batch item marked `batch_item_interrupted` may have incurred provider usage. It is not automatically replayed; inspect accounting before resubmitting it.
 
 See [accounting and recovery](architecture.md#accounting-and-failure-recovery) for the precise behavior.
+
+## Load and recovery drills
+
+Build Release first. The automated drill requires PostgreSQL 16 client tools, a reachable PostgreSQL server, `redis-server`, Python 3 and .NET 10. Give the test role permission to create databases and use a test cluster:
+
+```bash
+dotnet build --configuration Release
+export PGHOST=127.0.0.1 PGPORT=5432 PGUSER=llmproxy_test
+export PGPASSWORD='your-test-password'
+python scripts/recovery_drill.py --duration 60 --long-stream-seconds 30
+```
+
+The drill creates isolated databases, a temporary Redis instance, a local mock and two gateway processes. It exercises mixed normal/SSE traffic, checks a long stream, kills one gateway midstream, invokes `reservations recover` twice to verify one-time orphan settlement, stops/restarts Redis, then restores a PostgreSQL dump into a fresh database and compares accounting data. It cleans up its processes/databases and writes `artifacts/recovery-drill.json`. No live provider credentials are used.
+
+Default acceptance is zero errors, at least 20 successful requests and p95 below two seconds against the mock. This verifies local behavior; production targets require representative provider latency, stream duration and deployment hardware. SQLite online backup/restore is covered separately by integration tests.
+
+For a separately configured test gateway, measure additional scenarios with:
+
+```bash
+export LLMPROXY_API_KEY='a-test-gateway-key'
+python scripts/load_probe.py --url http://127.0.0.1:4000 \
+  --duration 60 --concurrency 8 --max-error-rate 0.01 --max-p95-ms 2000 \
+  --output artifacts/load.json
+```
+
+Repeat `--url` to distribute traffic across instances. This probe makes actual requests to the selected gateway, so use the intended test provider configuration and adequate test allowances. CI includes the recovery drill and native ARM64/AMD64 container and SDK smoke jobs. A passing local source run does not establish that the remote platform jobs have passed.

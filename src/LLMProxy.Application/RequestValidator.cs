@@ -15,6 +15,8 @@ public sealed class RequestValidator(GatewayOptions options, IModelRegistry regi
             Invalid("messages", "Provide a nonempty messages array within the configured limit.");
         if (request.Extra is { Count: > 0 }) Invalid(request.Extra.Keys.First(), "This parameter is not supported by this gateway version.");
         if (request.N is not (null or 1)) Invalid("n", "Only n=1 is supported.");
+        if (request.ReasoningEffort is not (null or "none" or "minimal" or "low" or "medium" or "high" or "xhigh"))
+            Invalid("reasoning_effort", "Invalid reasoning effort.");
         if (request.Temperature is < 0 or > 2 || request.TopP is < 0 or > 1
             || request.Temperature is { } temperature && !double.IsFinite(temperature)
             || request.TopP is { } topP && !double.IsFinite(topP)) Invalid("temperature", "Sampling parameters are outside their valid range.");
@@ -22,6 +24,8 @@ public sealed class RequestValidator(GatewayOptions options, IModelRegistry regi
             Invalid("max_completion_tokens", "Specify only one output token limit.");
         var max = request.MaxCompletionTokens ?? request.MaxTokens ?? Math.Min(options.Requests.DefaultMaxOutputTokens, definition.MaxOutputTokens);
         if (max < 1 || max > definition.MaxOutputTokens) Invalid("max_tokens", "The output token limit exceeds this model's configured bounds.");
+        if (request.ThinkingBudgetTokens is { } thinking && (thinking < 1024 || thinking >= max || request.ReasoningEffort is not null))
+            Invalid("thinking_budget_tokens", "Thinking budget must be at least 1024, below the output limit, and used without reasoning_effort.");
         if (request.StreamOptions is not null && !request.Stream) Invalid("stream_options", "stream_options requires stream=true.");
         if (request.Stop is { ValueKind: not (JsonValueKind.Null or JsonValueKind.String or JsonValueKind.Array) }) Invalid("stop", "stop must be a string or array of strings.");
         if (request.Stop is { ValueKind: JsonValueKind.Array } stop && (stop.GetArrayLength() > 4 || stop.EnumerateArray().Any(x => x.ValueKind != JsonValueKind.String)))
@@ -49,10 +53,8 @@ public sealed class RequestValidator(GatewayOptions options, IModelRegistry regi
             else conversationStarted = true;
             if (message.Content is { ValueKind: not (JsonValueKind.String or JsonValueKind.Array or JsonValueKind.Null) })
                 Invalid("messages", "Message content must be text.");
-            if (message.Content is { ValueKind: JsonValueKind.Array } parts && parts.EnumerateArray().Any(p =>
-                p.ValueKind != JsonValueKind.Object || !p.TryGetProperty("type", out var type) || type.ValueKind != JsonValueKind.String || type.GetString() != "text"
-                || !p.TryGetProperty("text", out var text) || text.ValueKind != JsonValueKind.String))
-                Invalid("messages", "Only text content parts are supported.");
+            if (message.Content is { ValueKind: JsonValueKind.Array } parts)
+                foreach (var part in parts.EnumerateArray()) ValidateContentPart(part, message.Role);
             if (message.Role != "assistant" && message.ToolCalls is { Count: > 0 }) Invalid("messages", "Only assistant messages may contain tool_calls.");
             if (message.Role != "assistant" && message.ReasoningContent is not null)
                 Invalid("messages", "Only assistant messages may contain reasoning_content.");
@@ -84,10 +86,45 @@ public sealed class RequestValidator(GatewayOptions options, IModelRegistry regi
     // UTF-8 byte count plus framing is deliberately conservative, and not a model tokenizer.
     public static long EstimateInputTokens(LlmRequest request)
     {
+        if (request.InputTokenEstimate is { } estimate) return estimate;
         var bytes = Encoding.UTF8.GetByteCount(JsonSerializer.Serialize(request.Messages, LlmJson.Options));
         if (request.Tools is not null) bytes += Encoding.UTF8.GetByteCount(JsonSerializer.Serialize(request.Tools, LlmJson.Options));
         return checked(bytes + request.Messages.Count * 16L + 256L);
     }
+
+    private static void ValidateContentPart(JsonElement part, string role)
+    {
+        JsonElement type = default;
+        if (part.ValueKind != JsonValueKind.Object || !part.TryGetProperty("type", out type) || type.ValueKind != JsonValueKind.String)
+            Invalid("messages.content", "Content parts require a type.");
+        if (type.GetString() == "text")
+        {
+            if (!part.TryGetProperty("text", out var text) || text.ValueKind != JsonValueKind.String)
+                Invalid("messages.content", "Text parts require text.");
+            return;
+        }
+        if (role != "user") Invalid("messages.content", "Image and audio inputs must be user messages.");
+        if (type.GetString() == "image_url" && part.TryGetProperty("image_url", out var image) && image.ValueKind == JsonValueKind.Object
+            && image.TryGetProperty("url", out var url) && url.ValueKind == JsonValueKind.String)
+        {
+            if (ValidImageUrl(url.GetString()!)) return;
+        }
+        if (type.GetString() == "input_audio" && part.TryGetProperty("input_audio", out var audio) && audio.ValueKind == JsonValueKind.Object
+            && audio.TryGetProperty("format", out var format) && format.ValueKind == JsonValueKind.String && format.GetString() is "wav" or "mp3"
+            && audio.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.String && ValidBase64(data.GetString()!)) return;
+        Invalid("messages.content", "Provide a valid HTTPS/base64 image or base64 wav/mp3 audio input.");
+    }
+
+    internal static bool ValidImageUrl(string value)
+    {
+        if (Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme == "https" && string.IsNullOrEmpty(uri.UserInfo)) return true;
+        var separator = value.IndexOf(";base64,", StringComparison.Ordinal);
+        return separator > 5 && value[..separator] is "data:image/png" or "data:image/jpeg" or "data:image/webp" or "data:image/gif"
+            && ValidBase64(value[(separator + 8)..]);
+    }
+
+    private static bool ValidBase64(string value) => value.Length > 0
+        && System.Buffers.Text.Base64.IsValid(value);
 
     private static bool ValidName(string? name) => name is { Length: > 0 and <= 64 }
         && name.All(c => char.IsAsciiLetterOrDigit(c) || c is '_' or '-');

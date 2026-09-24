@@ -9,6 +9,7 @@ public sealed class AnthropicProvider(ProviderHttpTransport transport, ProviderO
 {
     public string Name => "anthropic";
     public bool IsConfigured => options.Anthropic.IsConfigured;
+    public ModelCapabilities Capabilities => ProviderCapabilities.For(Name);
 
     public async Task<LlmResponse> ChatCompletionAsync(LlmRequest request, CancellationToken cancellationToken)
     {
@@ -72,7 +73,9 @@ public sealed class AnthropicProvider(ProviderHttpTransport transport, ProviderO
                     break;
                 case "message_delta":
                     var update = root.Object("usage");
-                    usage = TokenUsage.From(Math.Max(usage.InputTokens, Usage(update).InputTokens), update.Number("output_tokens"));
+                    usage = TokenUsage.From(Math.Max(usage.InputTokens, Usage(update).InputTokens), update.Number("output_tokens"))
+                        with
+                    { PromptTokensDetails = Usage(update).PromptTokensDetails ?? usage.PromptTokensDetails };
                     var reason = root.Object("delta").Text("stop_reason");
                     if (reason is not null)
                     {
@@ -91,7 +94,8 @@ public sealed class AnthropicProvider(ProviderHttpTransport transport, ProviderO
 
     private Task<HttpResponseMessage> SendAsync(LlmRequest request, CancellationToken cancellationToken) => transport.SendAsync(Name,
         options.Anthropic.Endpoint("messages"), BuildPayload(request), new Dictionary<string, string>
-        { ["x-api-key"] = options.Anthropic.ApiKey, ["anthropic-version"] = "2023-06-01" }, request.Stream, cancellationToken);
+        { ["x-api-key"] = options.Anthropic.ApiKey, ["anthropic-version"] = "2023-06-01" }, request.Stream, cancellationToken,
+        options.Anthropic, "x-api-key", "");
 
     internal static JsonObject BuildPayload(LlmRequest request)
     {
@@ -106,7 +110,7 @@ public sealed class AnthropicProvider(ProviderHttpTransport transport, ProviderO
                 blocks.Add(new JsonObject { ["type"] = "tool_result", ["tool_use_id"] = message.ToolCallId, ["content"] = message.Text() });
             else
             {
-                if (message.Text() is { Length: > 0 } text) blocks.Add(new JsonObject { ["type"] = "text", ["text"] = text });
+                foreach (var block in MediaContent.Anthropic(message)) blocks.Add(block);
                 foreach (var call in message.ToolCalls ?? []) blocks.Add(new JsonObject
                 {
                     ["type"] = "tool_use",
@@ -127,6 +131,8 @@ public sealed class AnthropicProvider(ProviderHttpTransport transport, ProviderO
         if (system.Length > 0) payload["system"] = system;
         if (request.Temperature is { } temperature) payload["temperature"] = temperature;
         if (request.TopP is { } topP) payload["top_p"] = topP;
+        if (request.ThinkingBudgetTokens is { } budget)
+            payload["thinking"] = new JsonObject { ["type"] = "enabled", ["budget_tokens"] = budget };
         if (request.Stop is { ValueKind: JsonValueKind.String } stop) payload["stop_sequences"] = new JsonArray(stop.GetString());
         else if (request.Stop is { ValueKind: JsonValueKind.Array }) payload["stop_sequences"] = ProviderJson.Node(request.Stop);
         if (request.Tools is { Count: > 0 })
@@ -159,5 +165,11 @@ public sealed class AnthropicProvider(ProviderHttpTransport transport, ProviderO
         _ => "stop"
     };
     private static TokenUsage Usage(JsonElement usage) => TokenUsage.From(
-        usage.Number("input_tokens") + usage.Number("cache_read_input_tokens") + usage.Number("cache_creation_input_tokens"), usage.Number("output_tokens"));
+        usage.Number("input_tokens") + usage.Number("cache_read_input_tokens") + usage.Number("cache_creation_input_tokens"), usage.Number("output_tokens"))
+        with
+    {
+        PromptTokensDetails = usage.Object("cache_read_input_tokens").ValueKind == JsonValueKind.Number
+            || usage.Object("cache_creation_input_tokens").ValueKind == JsonValueKind.Number
+                ? new(usage.Number("cache_read_input_tokens"), usage.Number("cache_creation_input_tokens")) : null
+    };
 }

@@ -46,12 +46,15 @@ public sealed class ModelRouter : IModelRouter, IRoutePlanner
     private readonly IModelRegistry _registry;
     private readonly Dictionary<string, ILlmProvider> _providers;
     private readonly Dictionary<string, IRoutingStrategy> _strategies;
+    private readonly IProviderCatalog? _catalog;
 
-    public ModelRouter(IModelRegistry registry, IEnumerable<ILlmProvider> providers, IEnumerable<IRoutingStrategy> strategies)
+    public ModelRouter(IModelRegistry registry, IEnumerable<ILlmProvider> providers, IEnumerable<IRoutingStrategy> strategies,
+        IProviderCatalog? catalog = null)
     {
         _registry = registry;
         _providers = providers.ToDictionary(x => x.Name, StringComparer.Ordinal);
         _strategies = strategies.ToDictionary(x => x.Name, StringComparer.Ordinal);
+        _catalog = catalog;
         foreach (var model in registry.Models)
         {
             if (!_strategies.ContainsKey(model.Routing))
@@ -65,14 +68,27 @@ public sealed class ModelRouter : IModelRouter, IRoutePlanner
         => (await PlanAsync(model, cancellationToken))[0].Provider;
 
     public async Task<IReadOnlyList<ProviderRoute>> PlanAsync(string model, CancellationToken cancellationToken)
+        => await PlanAsync(new LlmRequest { Model = model }, cancellationToken);
+
+    public async Task<IReadOnlyList<ProviderRoute>> PlanAsync(LlmRequest request, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var definition = _registry.Get(model);
-        var targets = definition.Targets.Where(x => _providers[x.Provider].IsConfigured).ToArray();
-        if (targets.Length == 0)
+        // Capture one catalog generation so account and model changes cannot split route planning.
+        var snapshot = (_catalog as RuntimeCatalog)?.Current;
+        var definition = (snapshot?.Registry ?? _registry).Get(request.Model);
+        var providers = snapshot?.Providers.ToDictionary(x => x.Name, StringComparer.Ordinal)
+            ?? _catalog?.Providers.ToDictionary(x => x.Name, StringComparer.Ordinal) ?? _providers;
+        var available = definition.Targets.Where(x => providers.TryGetValue(x.Provider, out var provider) && provider.IsConfigured).ToArray();
+        if (available.Length == 0)
             throw new GatewayException("No configured provider is available for this model.", "provider_unavailable", 503);
-        var ordered = await _strategies[definition.Routing].OrderAsync(model, targets, cancellationToken);
+        var input = RequestValidator.EstimateInputTokens(request);
+        var targets = available.Where(target => providers[target.Provider].Capabilities.Supports(request)
+            && (target.Capabilities?.Supports(request) ?? true)
+            && (target.Capabilities?.ContextWindowTokens is not { } window || input + request.OutputTokenLimit <= window)).ToArray();
+        if (targets.Length == 0)
+            throw new GatewayException("No configured target supports the requested features and context size.", "unsupported_model_capability", 400, "model");
+        var ordered = await _strategies[definition.Routing].OrderAsync(request, targets, snapshot?.Pricing, cancellationToken);
         if (!definition.EnableFallback && definition.Routing != "fallback") ordered = ordered.Take(1).ToArray();
-        return ordered.Select(target => new ProviderRoute(_providers[target.Provider], target)).ToArray();
+        return ordered.Select(target => new ProviderRoute(providers[target.Provider], target, snapshot?.Pricing)).ToArray();
     }
 }

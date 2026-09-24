@@ -9,16 +9,17 @@ using Polly.Retry;
 
 namespace LLMProxy.Application;
 
-public sealed record GatewayRequestContext(Guid RequestId, ApiKey ApiKey);
+public sealed record GatewayRequestContext(Guid RequestId, ApiKey ApiKey, CancellationToken? ClientCancellation = null);
 
-public sealed class GatewayService(
+public sealed partial class GatewayService(
     RequestValidator validator, IModelRegistry registry, IRoutePlanner router, IRateLimiter limiter,
     IGatewayStore store, CostCalculator costs, GatewayOptions options, GatewayTelemetry telemetry,
-    TimeProvider time, ILogger<GatewayService> logger)
+    TimeProvider time, ILogger<GatewayService> logger, IConcurrencyLimiter? concurrency = null, ProviderLatency? latency = null)
 {
     public async Task<LlmResponse> CompleteAsync(LlmRequest request, GatewayRequestContext context, CancellationToken cancellationToken)
     {
         request = validator.Validate(request, context.ApiKey);
+        var clientCancellation = context.ClientCancellation ?? cancellationToken;
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(TimeSpan.FromSeconds(options.Requests.TimeoutSeconds));
         var state = await BeginAsync(request, context, timeout.Token);
@@ -42,19 +43,20 @@ public sealed class GatewayService(
         }
         catch (Exception ex)
         {
-            state.ErrorCode = ErrorCode(ex, cancellationToken);
+            state.ErrorCode = ErrorCode(ex, clientCancellation);
             activity?.SetStatus(ActivityStatusCode.Error, state.ErrorCode);
-            if (ex is OperationCanceledException && !cancellationToken.IsCancellationRequested)
+            if (ex is OperationCanceledException && !clientCancellation.IsCancellationRequested)
                 throw new GatewayException("The request deadline was exceeded.", "request_timeout", 504);
             throw;
         }
-        finally { await FinishAsync(state, cancellationToken); }
+        finally { await FinishAsync(state, clientCancellation); }
     }
 
     public async IAsyncEnumerable<LlmStreamChunk> StreamAsync(LlmRequest request, GatewayRequestContext context,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         request = validator.Validate(request, context.ApiKey);
+        var clientCancellation = context.ClientCancellation ?? cancellationToken;
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(TimeSpan.FromSeconds(options.Requests.TimeoutSeconds));
         var state = await BeginAsync(request, context, timeout.Token);
@@ -80,8 +82,8 @@ public sealed class GatewayService(
             }
             catch (Exception ex)
             {
-                state.ErrorCode = ErrorCode(ex, cancellationToken);
-                if (ex is OperationCanceledException && !cancellationToken.IsCancellationRequested)
+                state.ErrorCode = ErrorCode(ex, clientCancellation);
+                if (ex is OperationCanceledException && !clientCancellation.IsCancellationRequested)
                     throw new GatewayException("The request deadline was exceeded.", "request_timeout", 504);
                 throw;
             }
@@ -103,8 +105,8 @@ public sealed class GatewayService(
                 try { hasNext = await stream.MoveNextAsync(); }
                 catch (Exception ex)
                 {
-                    state.ErrorCode = ErrorCode(ex, cancellationToken);
-                    if (ex is OperationCanceledException && !cancellationToken.IsCancellationRequested)
+                    state.ErrorCode = ErrorCode(ex, clientCancellation);
+                    if (ex is OperationCanceledException && !clientCancellation.IsCancellationRequested)
                         throw new GatewayException("The request deadline was exceeded.", "request_timeout", 504);
                     throw;
                 }
@@ -119,8 +121,10 @@ public sealed class GatewayService(
             try { if (stream is not null) await stream.DisposeAsync(); }
             finally
             {
+                if (!state.Success && timeout.IsCancellationRequested)
+                    state.ErrorCode ??= clientCancellation.IsCancellationRequested ? "request_cancelled" : "request_timeout";
                 if (!state.Success) activity?.SetStatus(ActivityStatusCode.Error, state.ErrorCode ?? "stream_interrupted");
-                await FinishAsync(state, cancellationToken);
+                await FinishAsync(state, clientCancellation);
             }
         }
     }
@@ -143,24 +147,34 @@ public sealed class GatewayService(
     private async Task<Execution> BeginAsync(LlmRequest request, GatewayRequestContext context, CancellationToken cancellationToken)
     {
         await CheckRateLimitAsync(context.ApiKey, request.Model, cancellationToken);
-        var routes = await router.PlanAsync(request.Model, cancellationToken);
+        var routes = await router.PlanAsync(request, cancellationToken);
         var input = RequestValidator.EstimateInputTokens(request);
         var reserveUsage = TokenUsage.From(input, request.OutputTokenLimit);
-        var maxCost = routes.Max(route => costs.Calculate(route.Target, reserveUsage));
+        var maxCost = routes.Max(route => costs.Calculate(route, reserveUsage, reservation: true));
         var now = time.GetUtcNow();
         var reservation = new QuotaReservation
         {
             RequestId = context.RequestId,
             ApiKeyId = context.ApiKey.Id,
             Model = request.Model,
+            Operation = request.Operation.ToString().ToLowerInvariant(),
             Tokens = reserveUsage.TotalTokens,
             CostUnits = Money.ToUnits(maxCost),
             CreatedAt = now,
             ExpiresAt = now.AddSeconds(options.Requests.ReservationTtlSeconds)
         };
-        if (!await store.TryReserveAsync(reservation, cancellationToken))
-            throw new GatewayException("The API key is disabled or its token/spending allowance is insufficient for this request.", "insufficient_quota", 429);
-        return new Execution(context, request, routes, reservation, input, now, time.GetTimestamp());
+        var lease = concurrency is null ? null : await concurrency.AcquireAsync([
+            new("global", options.Concurrency.GlobalLimit),
+            new($"key:{context.ApiKey.Id:N}", options.Concurrency.PerKeyLimit),
+            new($"model:{request.Model}", registry.Get(request.Model).MaxConcurrentRequests)
+        ], TimeSpan.FromSeconds(options.Requests.TimeoutSeconds + 60), cancellationToken);
+        try
+        {
+            if (!await store.TryReserveAsync(reservation, cancellationToken))
+                throw new GatewayException("The API key is disabled, expired or its token/spending allowance is insufficient for this request.", "insufficient_quota", 429);
+            return new Execution(context, request, routes, reservation, input, now, time.GetTimestamp()) { Lease = lease };
+        }
+        catch { if (lease is not null) await lease.DisposeAsync(); throw; }
     }
 
     private async Task<T> ExecuteWithFallbackAsync<T>(Execution state, Func<ProviderRoute, CancellationToken, Task<T>> action,
@@ -188,10 +202,37 @@ public sealed class GatewayService(
             var started = time.GetTimestamp();
             state.ProviderStarted = started;
             var success = false;
-            try { var result = await action(route, ct); success = true; return result; }
+            var attempts = new AttemptContext(state.Context.RequestId, route.Target, time);
+            using var attemptScope = attempts.Enter();
+            try
+            {
+                state.ProviderLease = concurrency is null ? null : await concurrency.AcquireAsync(
+                    [new($"provider:{route.Provider.Name}", options.Concurrency.PerProviderLimit)],
+                    TimeSpan.FromSeconds(options.Requests.TimeoutSeconds + 60), ct);
+                var result = await action(route, ct);
+                success = true;
+                latency?.Observe(route.Target, time.GetElapsedTime(started).TotalSeconds);
+                return result;
+            }
+            catch (GatewayException ex) when (ex.Code == "concurrency_limit_exceeded")
+            {
+                span?.SetStatus(ActivityStatusCode.Error);
+                throw new ProviderException("provider_concurrency_limited", true, 429);
+            }
             catch { span?.SetStatus(ActivityStatusCode.Error); throw; }
             finally
             {
+                if (!success) latency?.Observe(route.Target, options.Requests.TimeoutSeconds);
+                if (attempts.Attempts.IsEmpty) attempts.Start();
+                var recorded = attempts.Attempts.ToArray();
+                recorded[^1].Status = success ? "success" : "error";
+                state.Attempts.AddRange(recorded);
+                state.FinalAttempt = recorded[^1];
+                if ((!streaming || !success) && state.ProviderLease is { } providerLease)
+                {
+                    await providerLease.DisposeAsync();
+                    state.ProviderLease = null;
+                }
                 if (!streaming || !success) telemetry.ProviderFinished(route.Provider.Name, time.GetElapsedTime(started).TotalSeconds, success);
                 else telemetry.ProviderFirstToken(route.Provider.Name, time.GetElapsedTime(started).TotalSeconds);
             }
@@ -221,9 +262,30 @@ public sealed class GatewayService(
 
     private async Task FinishAsync(Execution state, CancellationToken requestCancellation)
     {
+        try { await PersistFinishAsync(state, requestCancellation); }
+        finally
+        {
+            try { if (state.ProviderLease is { } providerLease) await providerLease.DisposeAsync(); }
+            finally { if (state.Lease is { } lease) await lease.DisposeAsync(); }
+        }
+    }
+
+    private async Task PersistFinishAsync(Execution state, CancellationToken requestCancellation)
+    {
         if (state.StreamOpened && state.Route is { } completedRoute)
             telemetry.ProviderFinished(completedRoute.Provider.Name, time.GetElapsedTime(state.ProviderStarted).TotalSeconds, state.Success);
         var usage = ActualOrEstimatedUsage(state);
+        if (state.FinalAttempt is { } finalAttempt)
+        {
+            finalAttempt.InputTokens = usage.InputTokens;
+            finalAttempt.OutputTokens = usage.OutputTokens;
+            finalAttempt.CachedInputTokens = usage.PromptTokensDetails?.CachedTokens ?? 0;
+            finalAttempt.CacheCreationTokens = usage.PromptTokensDetails?.CacheCreationTokens ?? 0;
+            finalAttempt.UsageEstimated = state.Usage is not { TotalTokens: > 0 } || state.StreamOpened && !state.Success && !state.HasFinalUsage;
+            finalAttempt.EstimatedCost = state.Route is { } finalRoute ? costs.Calculate(finalRoute, usage) : 0;
+            finalAttempt.LatencyMs = (long)time.GetElapsedTime(state.ProviderStarted).TotalMilliseconds;
+            finalAttempt.Status = state.Success ? "success" : state.ErrorCode ?? "interrupted";
+        }
         var record = new UsageRecord
         {
             RequestId = state.Context.RequestId,
@@ -236,9 +298,11 @@ public sealed class GatewayService(
             LatencyMs = (long)time.GetElapsedTime(state.Started).TotalMilliseconds,
             Status = state.Success ? "success" : requestCancellation.IsCancellationRequested ? "cancelled" : "error",
             ErrorCode = state.Success ? null : state.ErrorCode ?? (requestCancellation.IsCancellationRequested ? "request_cancelled" : "stream_interrupted"),
-            EstimatedCost = state.Route is { } route ? costs.Calculate(route.Target, usage) : 0,
+            EstimatedCost = state.Attempts.Sum(x => x.EstimatedCost),
             UsageEstimated = state.Usage is not { TotalTokens: > 0 } || state.StreamOpened && !state.Success && !state.HasFinalUsage,
-            CreatedAt = state.StartedAt
+            CreatedAt = state.StartedAt,
+            Operation = state.Request.Operation.ToString().ToLowerInvariant(),
+            Attempts = state.Attempts
         };
         // Client disconnects do not cancel bookkeeping. A durable reservation protects allowances if this fails.
         using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -280,5 +344,9 @@ public sealed class GatewayService(
         public long OutputBytes { get; set; }
         public bool Success { get; set; }
         public string? ErrorCode { get; set; }
+        public IAsyncDisposable? Lease { get; init; }
+        public IAsyncDisposable? ProviderLease { get; set; }
+        public List<UpstreamAttempt> Attempts { get; } = [];
+        public UpstreamAttempt? FinalAttempt { get; set; }
     }
 }

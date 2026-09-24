@@ -38,7 +38,12 @@ internal static class ProviderJson
     public static TokenUsage OpenAiUsage(JsonElement root)
     {
         var usage = root.Object("usage");
-        return TokenUsage.From(usage.Number("prompt_tokens"), usage.Number("completion_tokens"));
+        return TokenUsage.From(usage.Number("prompt_tokens"), usage.Number("completion_tokens"))
+            with
+        {
+            PromptTokensDetails = usage.Object("prompt_tokens_details").ValueKind == JsonValueKind.Object
+                ? new(usage.Object("prompt_tokens_details").Number("cached_tokens")) : null
+        };
     }
 
     public static void RejectUnsupported(LlmRequest request, bool supportsJson)

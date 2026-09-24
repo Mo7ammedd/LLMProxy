@@ -9,6 +9,7 @@ public sealed class CohereProvider(ProviderHttpTransport transport, ProviderOpti
 {
     public string Name => "cohere";
     public bool IsConfigured => options.Cohere.IsConfigured;
+    public ModelCapabilities Capabilities => ProviderCapabilities.For(Name);
 
     public async Task<LlmResponse> ChatCompletionAsync(LlmRequest request, CancellationToken cancellationToken)
     {
@@ -76,7 +77,7 @@ public sealed class CohereProvider(ProviderHttpTransport transport, ProviderOpti
 
     private Task<HttpResponseMessage> SendAsync(LlmRequest request, CancellationToken cancellationToken) => transport.SendAsync(Name,
         options.Cohere.Endpoint("chat"), BuildPayload(request), new Dictionary<string, string>
-        { ["Authorization"] = "Bearer " + options.Cohere.ApiKey }, request.Stream, cancellationToken);
+        { ["Authorization"] = "Bearer " + options.Cohere.ApiKey }, request.Stream, cancellationToken, options.Cohere);
 
     private static JsonObject BuildPayload(LlmRequest request)
     {

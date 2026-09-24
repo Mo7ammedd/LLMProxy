@@ -18,6 +18,9 @@ public sealed class ApiKey
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
     public DateTimeOffset? LastUsedAt { get; set; }
+    public DateTimeOffset? ExpiresAt { get; set; }
+    public long? MonthlyTokenLimit { get; set; }
+    public long? MonthlyBudgetUnits { get; set; }
 
     public bool Allows(string model) => AllowedModels.Contains("*", StringComparer.Ordinal)
         || AllowedModels.Contains(model, StringComparer.Ordinal);
@@ -40,6 +43,8 @@ public sealed class QuotaReservation
     public long CostUnits { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset ExpiresAt { get; set; }
+    public string QuotaPeriod { get; set; } = "";
+    public string Operation { get; set; } = "chat";
 }
 
 public sealed class UsageRecord
@@ -57,10 +62,13 @@ public sealed class UsageRecord
     public decimal EstimatedCost { get; set; }
     public bool UsageEstimated { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
+    public string Operation { get; set; } = "chat";
+    [System.Text.Json.Serialization.JsonIgnore] public List<UpstreamAttempt> Attempts { get; set; } = [];
 }
 
 public sealed record ApiKeyPolicy(bool Enabled, string[] AllowedModels, int RequestsPerMinute,
-    long? TokenLimit, long? BudgetUnits);
+    long? TokenLimit, long? BudgetUnits, DateTimeOffset? ExpiresAt = null,
+    long? MonthlyTokenLimit = null, long? MonthlyBudgetUnits = null);
 
 public interface IGatewayStore
 {

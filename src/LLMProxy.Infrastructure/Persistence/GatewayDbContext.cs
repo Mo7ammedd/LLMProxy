@@ -11,6 +11,16 @@ public abstract class GatewayDbContext(DbContextOptions options) : DbContext(opt
     public DbSet<ApiKey> ApiKeys => Set<ApiKey>();
     public DbSet<UsageRecord> Usage => Set<UsageRecord>();
     public DbSet<QuotaReservation> Reservations => Set<QuotaReservation>();
+    public DbSet<QuotaWindow> QuotaWindows => Set<QuotaWindow>();
+    public DbSet<RetiredKeyCredential> RetiredCredentials => Set<RetiredKeyCredential>();
+    public DbSet<OperatorAccount> Operators => Set<OperatorAccount>();
+    public DbSet<OperatorSession> Sessions => Set<OperatorSession>();
+    public DbSet<AuditRecord> Audit => Set<AuditRecord>();
+    public DbSet<UpstreamAttempt> Attempts => Set<UpstreamAttempt>();
+    public DbSet<ReconciliationRecord> Reconciliations => Set<ReconciliationRecord>();
+    public DbSet<GatewayFile> Files => Set<GatewayFile>();
+    public DbSet<BatchJob> Batches => Set<BatchJob>();
+    public DbSet<BatchItem> BatchItems => Set<BatchItem>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -41,6 +51,9 @@ public abstract class GatewayDbContext(DbContextOptions options) : DbContext(opt
         usage.Property(x => x.EstimatedCost).HasPrecision(20, 9);
         usage.HasIndex(x => new { x.ApiKeyId, x.CreatedAt });
         usage.HasIndex(x => x.CreatedAt);
+        usage.Ignore(x => x.Attempts);
+        usage.Property(x => x.Operation).HasMaxLength(24);
+        usage.HasIndex(x => new { x.CreatedAt, x.RequestId });
 
         var reservations = builder.Entity<QuotaReservation>();
         reservations.ToTable("quota_reservations");
@@ -48,6 +61,78 @@ public abstract class GatewayDbContext(DbContextOptions options) : DbContext(opt
         reservations.HasOne<ApiKey>().WithMany().HasForeignKey(x => x.ApiKeyId).OnDelete(DeleteBehavior.Restrict);
         reservations.Property(x => x.Model).HasMaxLength(128);
         reservations.HasIndex(x => x.ExpiresAt);
+        reservations.Property(x => x.QuotaPeriod).HasMaxLength(7);
+        reservations.Property(x => x.Operation).HasMaxLength(24);
+
+        var windows = builder.Entity<QuotaWindow>();
+        windows.ToTable("quota_windows").HasKey(x => x.Id);
+        windows.Property(x => x.Id).HasMaxLength(40);
+        windows.Property(x => x.Period).HasMaxLength(7);
+        windows.HasIndex(x => new { x.ApiKeyId, x.Period }).IsUnique();
+        windows.HasOne<ApiKey>().WithMany().HasForeignKey(x => x.ApiKeyId).OnDelete(DeleteBehavior.Restrict);
+        var credentials = builder.Entity<RetiredKeyCredential>();
+        credentials.ToTable("retired_credentials").HasKey(x => x.KeyHash);
+        credentials.Property(x => x.KeyHash).HasMaxLength(64);
+        credentials.HasIndex(x => x.ExpiresAt);
+        credentials.HasOne<ApiKey>().WithMany().HasForeignKey(x => x.ApiKeyId).OnDelete(DeleteBehavior.Cascade);
+
+        var operators = builder.Entity<OperatorAccount>();
+        operators.ToTable("operators").HasKey(x => x.Id);
+        operators.Property(x => x.Username).HasMaxLength(128);
+        operators.HasIndex(x => x.Username).IsUnique();
+        operators.Property(x => x.PasswordHash).HasMaxLength(256);
+        operators.Property(x => x.Role).HasMaxLength(24);
+        var sessions = builder.Entity<OperatorSession>();
+        sessions.ToTable("operator_sessions").HasKey(x => x.TokenHash);
+        sessions.Property(x => x.TokenHash).HasMaxLength(64);
+        sessions.HasIndex(x => x.ExpiresAt);
+        sessions.HasOne<OperatorAccount>().WithMany().HasForeignKey(x => x.OperatorId).OnDelete(DeleteBehavior.Cascade);
+        var audit = builder.Entity<AuditRecord>();
+        audit.ToTable("audit_events").HasKey(x => x.Id);
+        audit.Property(x => x.Actor).HasMaxLength(160);
+        audit.Property(x => x.Action).HasMaxLength(64);
+        audit.Property(x => x.Resource).HasMaxLength(256);
+        audit.HasIndex(x => new { x.CreatedAt, x.Id });
+        var attempts = builder.Entity<UpstreamAttempt>();
+        attempts.ToTable("upstream_attempts").HasKey(x => x.Id);
+        attempts.Property(x => x.Provider).HasMaxLength(64);
+        attempts.Property(x => x.Model).HasMaxLength(256);
+        attempts.Property(x => x.ProviderKeyId).HasMaxLength(36);
+        attempts.Property(x => x.ProviderRequestId).HasMaxLength(256);
+        attempts.Property(x => x.Status).HasMaxLength(32);
+        attempts.Property(x => x.EstimatedCost).HasPrecision(20, 9);
+        attempts.Property(x => x.ActualCost).HasPrecision(20, 9);
+        attempts.HasIndex(x => new { x.RequestId, x.CreatedAt });
+        var reconciliation = builder.Entity<ReconciliationRecord>();
+        reconciliation.ToTable("billing_reconciliations").HasKey(x => x.Reference);
+        reconciliation.Property(x => x.Reference).HasMaxLength(128);
+        reconciliation.Property(x => x.Actor).HasMaxLength(160);
+        reconciliation.Property(x => x.ActualCost).HasPrecision(20, 9);
+        reconciliation.HasIndex(x => x.AttemptId).IsUnique();
+
+        var files = builder.Entity<GatewayFile>();
+        files.ToTable("gateway_files").HasKey(x => x.Id);
+        files.Property(x => x.Id).HasMaxLength(64);
+        files.Property(x => x.Filename).HasMaxLength(128);
+        files.Property(x => x.Purpose).HasMaxLength(24);
+        files.Property(x => x.BatchId).HasMaxLength(64);
+        files.HasIndex(x => new { x.ApiKeyId, x.CreatedAt, x.Id });
+        var batches = builder.Entity<BatchJob>();
+        batches.ToTable("batch_jobs").HasKey(x => x.Id);
+        batches.Property(x => x.Id).HasMaxLength(64);
+        batches.Property(x => x.Status).HasMaxLength(24);
+        batches.Property(x => x.Endpoint).HasMaxLength(64);
+        batches.HasIndex(x => new { x.ApiKeyId, x.CreatedAt, x.Id });
+        batches.HasOne<ApiKey>().WithMany().HasForeignKey(x => x.ApiKeyId).OnDelete(DeleteBehavior.Restrict);
+        var items = builder.Entity<BatchItem>();
+        items.ToTable("batch_items").HasKey(x => x.Id);
+        items.Property(x => x.BatchId).HasMaxLength(64);
+        items.Property(x => x.CustomId).HasMaxLength(128);
+        items.Property(x => x.LeaseOwner).HasMaxLength(64);
+        items.Property(x => x.Status).HasMaxLength(24);
+        items.HasIndex(x => new { x.BatchId, x.Index }).IsUnique();
+        items.HasIndex(x => new { x.Status, x.LeaseExpiresAt });
+        items.HasOne<BatchJob>().WithMany().HasForeignKey(x => x.BatchId).OnDelete(DeleteBehavior.Cascade);
 
         // SQLite cannot order DateTimeOffset natively. Production PostgreSQL uses timestamptz.
         if (Database.IsSqlite())

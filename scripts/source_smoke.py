@@ -6,7 +6,7 @@ import sys
 import tempfile
 from pathlib import Path
 from smoke_common import (ADMIN_KEY, KEY, PROVIDER_NAMES, ROOT, check_http, check_persisted_usage,
-                          check_sdks, isolated_environment, provider_environment, wait_ready)
+                          check_sdks, check_protocol_sdks, isolated_environment, provider_environment, wait_ready)
 
 
 def free_port():
@@ -43,6 +43,8 @@ def main():
                 check_http(base)
                 check_sdks(base, args.configuration)
                 check_persisted_usage(base)
+                if args.provider == "openai":
+                    check_protocol_sdks(base)
                 print(f"Source smoke test passed for {args.provider}; no external LLM provider was contacted.", flush=True)
             except Exception:
                 log.flush()

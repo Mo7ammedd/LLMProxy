@@ -18,6 +18,8 @@ public static class ServiceCollectionExtensions
             throw new InvalidOperationException("Storage mode must be Standalone or PostgreSql.");
         if (string.IsNullOrWhiteSpace(options.RedisKeyPrefix) || options.RedisKeyPrefix.IndexOfAny(['{', '}']) >= 0)
             throw new InvalidOperationException("Invalid Redis key prefix.");
+        if (options.UsageRetentionDays is < 0 or > 36500 || options.AuditRetentionDays is < 0 or > 36500 || options.BatchRetentionDays is < 1 or > 365)
+            throw new InvalidOperationException("Invalid retention settings.");
         services.AddSingleton(options);
         if (options.IsStandalone)
         {
@@ -28,6 +30,7 @@ public static class ServiceCollectionExtensions
             services.AddSingleton<IDbContextFactory<GatewayDbContext>, GatewayContextFactory<SqliteGatewayDbContext>>();
             services.AddSingleton<IRateLimiter, MemoryRateLimiter>();
             services.AddSingleton<IRoutingState, MemoryRoutingState>();
+            services.AddSingleton<IConcurrencyLimiter, MemoryConcurrencyLimiter>();
         }
         else
         {
@@ -48,11 +51,16 @@ public static class ServiceCollectionExtensions
             });
             services.AddSingleton<IRateLimiter, RedisRateLimiter>();
             services.AddSingleton<IRoutingState, RedisRoutingState>();
+            services.AddSingleton<IConcurrencyLimiter, RedisConcurrencyLimiter>();
             services.AddHealthChecks().AddCheck<RedisHealthCheck>("redis", tags: ["ready"], timeout: TimeSpan.FromSeconds(5));
         }
-        services.AddSingleton<IGatewayStore, EfGatewayStore>();
+        services.AddSingleton<EfGatewayStore>();
+        services.AddSingleton<IGatewayStore>(sp => sp.GetRequiredService<EfGatewayStore>());
+        services.AddSingleton<IManagementStore>(sp => sp.GetRequiredService<EfGatewayStore>());
+        services.AddSingleton<IBatchStore>(sp => sp.GetRequiredService<EfGatewayStore>());
         services.AddSingleton<StorageInitializer>();
         services.AddHostedService<ReservationRecoveryService>();
+        services.AddHostedService<RetentionService>();
         services.AddHealthChecks().AddCheck<StorageHealthCheck>(options.IsStandalone ? "sqlite" : "postgresql", tags: ["ready"], timeout: TimeSpan.FromSeconds(5));
         return services;
     }

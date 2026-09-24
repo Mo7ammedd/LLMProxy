@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   verify:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     services:
       postgres:
@@ -47,16 +47,64 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         run: '[[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]'
       - run: dotnet restore --locked-mode
+      - run: dotnet format --verify-no-changes --no-restore
       - run: dotnet build --configuration Release --no-restore
       - run: dotnet test --configuration Release --no-build --no-restore --logger "trx;LogFilePrefix=results" --results-directory artifacts/test-results
+      - name: Install recovery drill tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y redis-server postgresql-client-16
+          echo "/usr/lib/postgresql/16/bin" >> "$GITHUB_PATH"
+      - name: Load, multi-instance failure and PostgreSQL restoration drill
+        env:
+          PGHOST: 127.0.0.1
+          PGPORT: '5432'
+          PGUSER: postgres
+          PGPASSWORD: llmproxy_ci_fixture_password
+        run: python3 scripts/recovery_drill.py --duration 60 --long-stream-seconds 30
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: test-results
           path: artifacts/test-results
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: recovery-drill
+          path: artifacts/recovery-drill.json
+
+  runtime-arm64:
+    needs: verify
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r examples/python/requirements.txt
+      - run: npm ci --prefix examples/typescript --ignore-scripts
+      - run: dotnet restore examples/csharp --locked-mode
+      - run: dotnet build examples/csharp --configuration Release --no-restore
+      - uses: docker/setup-buildx-action@v3
+      - name: Build ARM64 runtime image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/arm64
+          load: true
+          tags: llmproxy:smoke
+      - name: Run container and SDK checks on ARM64
+        run: python scripts/docker_smoke.py
 
   image:
-    needs: verify
+    needs: [verify, runtime-arm64]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -81,6 +129,10 @@ jobs:
       - run: npm ci --prefix examples/typescript --ignore-scripts
       - run: dotnet restore examples/csharp --locked-mode
       - run: dotnet build examples/csharp --configuration Release --no-restore
+      - run: dotnet restore src/LLMProxy.Server --locked-mode
+      - run: dotnet build src/LLMProxy.Server --configuration Release --no-restore
+      - name: Source and extended OpenAI SDK compatibility
+        run: python scripts/source_smoke.py
       - uses: docker/setup-buildx-action@v3
       - name: Build test image
         uses: docker/build-push-action@v6

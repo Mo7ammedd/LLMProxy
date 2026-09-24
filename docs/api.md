@@ -69,7 +69,7 @@ Without `include_usage`, usage fields/events are omitted from the downstream str
 
 ## Compatibility
 
-The supported surface is Chat Completions and model listing, not the entire OpenAI product API. The [official Chat Completions reference](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create) defines the envelope and SSE usage convention used here.
+The supported surface includes Chat Completions, model listing, embeddings, stateless Responses, files and gateway-managed batches. See [extended protocols](expanded-api.md#embeddings) for adapter coverage and constraints. The [official Chat Completions reference](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create) defines the chat envelope and SSE usage convention used here.
 
 | Feature | OpenAI / Azure / Foundry | Anthropic | Gemini |
 | --- | --- | --- | --- |
@@ -85,6 +85,9 @@ The supported surface is Chat Completions and model listing, not the entire Open
 | `response_format` | Forwarded | Rejected | JSON object/schema translation |
 | `seed`, message `name`, strict tools | Forwarded | Rejected | Rejected |
 | `user` metadata | Forwarded | Omitted | Omitted |
+| Image input | Model-dependent | HTTPS/base64 translation | Native media parts |
+| Audio input | Model-dependent | Rejected | Base64 WAV/MP3 translation |
+| Reasoning controls | `reasoning_effort` on compatible models | `thinking_budget_tokens`, without tools | `thinking_budget_tokens` |
 
 The added adapters also support text, text-part arrays, tools/results and normal/SSE responses, with these differences:
 
@@ -96,18 +99,18 @@ The added adapters also support text, text-part arrays, tools/results and normal
 | Groq | Developer → system; `max_completion_tokens`; seed, tools and supported structured-output formats forwarded. Message names are rejected. Native final-chunk usage is collected without sending `stream_options`. |
 | Ollama | Developer → system; `max_tokens`; seed and response formats forwarded. Auto tool choice is implicit; `none` removes offered tools. Required/named choices, strict tools, message names and `parallel_tool_calls: false` are rejected. Provider authentication is optional. |
 
-`user` metadata is omitted for Mistral, Cohere, DeepSeek and Ollama. Foundry supports OpenAI v1 chat deployments; model capabilities depend on the deployment and do not include Foundry Agents or the separate Anthropic API.
+`user` metadata is omitted for Mistral, Cohere, DeepSeek and Ollama. Foundry supports OpenAI v1 chat, embeddings and stateless Responses on compatible deployments. Foundry Agents and the separate Anthropic API remain outside this adapter.
 
-Provider/model availability and restrictions still apply. Known unsupported adapter parameters fail with `unsupported_parameter`; restrictions enforced upstream return a sanitized `provider_rejected_request`. Capability-based routing is not implemented. Use a dedicated alias with compatible providers for provider-specific features. See the [provider guide](providers.md) for setup and model defaults.
+The router intersects adapter and configured model capabilities, including known feature combinations, before selecting providers or reserving quota. If no target qualifies, it returns `unsupported_model_capability` (400). Direct adapter checks can return `unsupported_parameter`; additional restrictions enforced upstream return a sanitized `provider_rejected_request`. Configure target capabilities to match the actual model/deployment. See the [provider guide](providers.md) and [capability configuration](configuration.md#models-and-routing).
 
-MVP boundaries:
+Compatibility boundaries:
 
-- Exactly one completion choice (`n=1`). Images, audio, video, embeddings, Responses API, batches, stored completions and log probabilities are not implemented.
-- Unknown top-level chat parameters are rejected. Input text is required unless an assistant message contains tool calls.
+- Exactly one chat completion choice (`n=1`). Image/audio inputs are supported on compatible targets; image generation, audio generation/transcription, video, stored completions and log probabilities are not implemented.
+- Unknown top-level chat parameters are rejected. Message content supports text or validated content-part arrays; only assistant tool calls can omit content. Media parts belong in user messages.
 - System/developer messages must precede the conversation. Every tool response must match an outstanding assistant tool call; outstanding calls must be resolved before the next non-tool message.
 - Function names use ASCII letters, numbers, `_` and `-`, up to 64 characters. Tool arguments must be valid JSON objects. The gateway never executes a tool.
 - Gemini thought signatures attached to function calls are preserved in `tool_calls[].extra_content.google.thought_signature`. Applications using such models must retain this opaque metadata in subsequent tool history. SDKs that discard unknown fields may require explicit metadata preservation or a model without that requirement.
-- DeepSeek's optional assistant `reasoning_content` and streamed `delta.reasoning_content` are preserved separately from `content`. Retain this field in tool history for thinking models; SDKs that discard unknown fields need explicit metadata preservation. It is stripped when forwarding history to other adapters. It is never logged. Gemini/Mistral thought blocks and Cohere tool plans are not exposed. Provider-specific thinking/effort controls are not accepted in this version.
+- DeepSeek's optional assistant `reasoning_content` and streamed `delta.reasoning_content` are preserved separately from `content`. Retain this field in tool history for thinking models; SDKs that discard unknown fields need explicit metadata preservation. It is stripped when forwarding history to other adapters and never logged. Gemini/Mistral/Anthropic thought blocks and Cohere tool plans are not exposed. [Reasoning control support](expanded-api.md#chat-media-and-reasoning-controls) depends on adapter and model capabilities.
 - Request and output limits are configurable. The default inbound body limit is 1 MiB and default output cap is 1,024 tokens.
 
 ## Errors
@@ -127,22 +130,22 @@ Errors under `/v1/*` use:
 
 | Status | Typical codes | Meaning |
 | --- | --- | --- |
-| 400 | `invalid_json`, `invalid_request`, `unsupported_parameter`, `provider_rejected_request` | Invalid/unsupported input |
-| 401 | `invalid_api_key` | Missing, unknown or disabled gateway key |
+| 400 | `invalid_json`, `invalid_request`, `unsupported_parameter`, `unsupported_model_capability`, `provider_rejected_request` | Invalid/unsupported input |
+| 401 | `invalid_api_key` | Missing, unknown, expired or disabled gateway key |
 | 403 | `model_not_allowed` | Key has no access to that alias |
 | 404 | `model_not_found`, `not_found` | Unknown alias or endpoint |
 | 413 | `invalid_request` | Request body exceeds the configured limit |
 | 415 | `invalid_content_type` | A JSON body is required |
-| 429 | `rate_limit_exceeded`, `insufficient_quota`, `provider_rate_limited` | RPM, token/budget or upstream allowance exhausted |
+| 429 | `rate_limit_exceeded`, `concurrency_limit_exceeded`, `insufficient_quota`, `provider_rate_limited`, `provider_concurrency_limited` | RPM, concurrent requests, token/budget or upstream allowance exhausted |
 | 502 | `provider_unavailable`, `provider_connection_error`, `invalid_provider_response` | Upstream failure |
-| 503 | `provider_unavailable`, `rate_limit_unavailable`, `routing_unavailable`, `storage_unavailable` | Gateway dependency unavailable |
+| 503 | `provider_unavailable`, `rate_limit_unavailable`, `concurrency_unavailable`, `routing_unavailable`, `storage_unavailable` | Gateway dependency unavailable |
 | 504 | `request_timeout`, `provider_timeout` | Request/provider deadline exceeded |
 
-RPM denials include `Retry-After` in seconds. Lifetime quota denials do not have a time-based reset. Provider error bodies, internal exception messages, stack traces and credentials are never returned. Management endpoints use RFC 7807 problem details with a safe `code` and `request_id`.
+Gateway RPM and concurrency denials include `Retry-After` in seconds. Monthly allowances renew at UTC month boundaries; lifetime allowances do not reset. Quota denials do not include a retry time because both policies can apply. Provider error bodies, internal exception messages, stack traces and credentials are never returned. Management endpoints use RFC 7807 problem details with a safe `code` and `request_id`.
 
 ## Administration
 
-The management API is disabled unless `LLMPROXY_ADMIN_KEY` is set. Use that secret as the bearer credential. It is separate from gateway API keys and should only be reachable by operators.
+Authenticate with a local operator bearer session or the separate `LLMPROXY_ADMIN_KEY` bootstrap secret. `/admin` provides the dashboard and sign-in form. The shared key can create the first local administrator; local accounts continue working if that secret is later removed. Gateway API keys cannot access management. See [roles, sessions and auditing](expanded-api.md#operator-access-and-dashboard).
 
 Create a key:
 
@@ -150,7 +153,7 @@ Create a key:
 curl http://localhost:4000/admin/keys \
   -H "Authorization: Bearer $LLMPROXY_ADMIN_KEY" \
   -H 'Content-Type: application/json' \
-  -d '{"owner":"payments-service","allowed_models":["fast"],"requests_per_minute":60,"token_limit":1000000,"spending_budget":20}'
+  -d '{"owner":"payments-service","allowed_models":["fast"],"requests_per_minute":60,"token_limit":1000000,"spending_budget":20,"monthly_spending_budget":10,"expires_at":"2027-01-01T00:00:00Z"}'
 ```
 
 The 201 response contains `key` once and `details` containing its ID and policy. Lists and updates never return the raw key or hash.
@@ -163,10 +166,15 @@ The 201 response contains `key` once and `details` containing its ID and policy.
   "allowed_models": ["fast"],
   "requests_per_minute": 60,
   "token_limit": 1000000,
-  "spending_budget": 20
+  "spending_budget": 20,
+  "monthly_token_limit": 500000,
+  "monthly_spending_budget": 10,
+  "expires_at": "2027-01-01T00:00:00Z"
 }
 ```
 
 Supply the full policy when updating. Omitted nullable limits become unlimited; consumed counters and ownership are preserved. `allowed_models: ["*"]` grants all configured aliases. Lowering a limit below current consumption prevents subsequent admissions.
 
-`GET /admin/usage?api_key_id=<uuid>&limit=100` lists the newest admitted request records, up to 1,000 per request. Records include `request_id`, `api_key_id`, `model`, `provider`, input/output/total tokens, latency, status, nullable error code, estimated cost, `usage_estimated` and UTC creation time. It is an operational listing endpoint; arbitrary analytics and pagination exports are not part of this MVP.
+`GET /admin/usage?api_key_id=<uuid>&limit=100` preserves the legacy array of recent admitted requests, up to 1,000 per request. Records include request/key IDs, model, provider, operation, input/output/total tokens, latency, status/error, estimated cost, `usage_estimated` and UTC creation time.
+
+Use `/admin/usage/page` for cursor pagination, `/admin/usage/summary` for rollups and `/admin/usage/export` for CSV. `/admin/keys/page` and `/admin/audit` also paginate. `/admin/usage/{id}/attempts` lists retries/fallback attempts, and `/admin/billing/reconcile` applies invoice adjustments. `/admin/keys/{id}/rotate` rotates credentials without resetting allowances. [Complete management endpoint reference](expanded-api.md#reports-and-reconciliation).
