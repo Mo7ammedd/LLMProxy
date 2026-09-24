@@ -11,6 +11,31 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 KEY = "llmp_sk_docker_fixture_only_not_a_real_api_key_123456"
 ADMIN_KEY = "admin_docker_fixture_only_not_a_real_key_123456"
+PROVIDER_NAMES = ("openai", "foundry", "mistral", "cohere", "deepseek", "groq", "ollama")
+
+
+def isolated_environment():
+    """Do not inherit real provider credentials, endpoints or identity settings."""
+    prefixes = ("OPENAI_", "ANTHROPIC_", "GEMINI_", "AZURE_", "FOUNDRY_", "MISTRAL_",
+                "COHERE_", "DEEPSEEK_", "GROQ_", "OLLAMA_", "LLMPROXY__PROVIDERS__")
+    return {key: value for key, value in os.environ.items() if not key.upper().startswith(prefixes)}
+
+
+def provider_environment(provider, mock_base):
+    section, path = {
+        "openai": ("OpenAI", "/v1"), "foundry": ("Foundry", ""), "mistral": ("Mistral", "/v1"),
+        "cohere": ("Cohere", "/v2"), "deepseek": ("DeepSeek", "/v1"),
+        "groq": ("Groq", "/openai/v1"), "ollama": ("Ollama", "/v1"),
+    }[provider]
+    settings = {
+        provider.upper() + "_ENDPOINT": mock_base + path,
+        "LLMProxy__Providers__" + section + "__AllowInsecureHttp": "true",
+    }
+    if provider != "ollama":
+        settings[provider.upper() + "_API_KEY"] = "mock-only-not-a-live-key"
+    if provider == "foundry":
+        settings["FOUNDRY_AUTHENTICATION"] = "ApiKey"
+    return settings
 
 
 def request(base, path, data=None, key=KEY):
@@ -74,7 +99,7 @@ def check_http(base):
 
 
 def check_sdks(base, configuration="Release"):
-    environment = os.environ.copy()
+    environment = isolated_environment()
     environment.update(LLMPROXY_BASE_URL=base + "/v1", LLMPROXY_API_KEY=KEY)
     commands = [
         [sys.executable, "examples/python/chat.py"],

@@ -1,12 +1,12 @@
 """Run the built source server against a local mock, including three unmodified SDKs."""
 import argparse
-import os
 import socket
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from smoke_common import ADMIN_KEY, KEY, ROOT, check_http, check_persisted_usage, check_sdks, wait_ready
+from smoke_common import (ADMIN_KEY, KEY, PROVIDER_NAMES, ROOT, check_http, check_persisted_usage,
+                          check_sdks, isolated_environment, provider_environment, wait_ready)
 
 
 def free_port():
@@ -18,21 +18,20 @@ def free_port():
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--configuration", default="Release")
+    parser.add_argument("--provider", choices=PROVIDER_NAMES, default="openai")
     args = parser.parse_args()
     port, mock_port = free_port(), free_port()
     base = f"http://127.0.0.1:{port}"
     with tempfile.TemporaryDirectory(prefix="llmproxy-smoke-") as temporary:
-        environment = os.environ.copy()
+        environment = isolated_environment()
         environment.update({
             "ASPNETCORE_URLS": base, "ASPNETCORE_HTTP_PORTS": "", "ASPNETCORE_HTTPS_PORTS": "",
             "LLMProxy__Storage__Mode": "Standalone", "LLMProxy__Storage__SqlitePath": str(Path(temporary) / "gateway.db"),
             "LLMProxy__Storage__AutoMigrate": "true",
-            "LLMProxy__Providers__OpenAI__BaseUrl": f"http://127.0.0.1:{mock_port}/v1",
-            "LLMProxy__Providers__OpenAI__AllowInsecureHttp": "true",
-            "OPENAI_API_KEY": "mock-only-not-a-live-key", "ANTHROPIC_API_KEY": "", "GEMINI_API_KEY": "", "AZURE_OPENAI_API_KEY": "",
             "LLMPROXY_BOOTSTRAP_KEY": KEY, "LLMPROXY_ADMIN_KEY": ADMIN_KEY,
             "OTEL_EXPORTER_OTLP_ENDPOINT": "",
         })
+        environment.update(provider_environment(args.provider, f"http://127.0.0.1:{mock_port}"))
         log_path = Path(temporary) / "server.log"
         processes = []
         with log_path.open("w") as log:
@@ -44,7 +43,7 @@ def main():
                 check_http(base)
                 check_sdks(base, args.configuration)
                 check_persisted_usage(base)
-                print("Source smoke test passed; no external LLM provider was contacted.", flush=True)
+                print(f"Source smoke test passed for {args.provider}; no external LLM provider was contacted.", flush=True)
             except Exception:
                 log.flush()
                 print(log_path.read_text()[-12000:], file=sys.stderr)

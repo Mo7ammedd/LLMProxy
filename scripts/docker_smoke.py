@@ -1,10 +1,10 @@
 """Verify the production image with PostgreSQL, Redis, and a mock provider."""
 import json
-import os
 import subprocess
 import urllib.error
 import uuid
-from smoke_common import ADMIN_KEY, KEY, ROOT, check_http, check_persisted_usage, check_sdks, request, wait_ready
+from smoke_common import (ADMIN_KEY, KEY, PROVIDER_NAMES, ROOT, check_http, check_persisted_usage,
+                          check_sdks, isolated_environment, provider_environment, request, wait_ready)
 
 
 def published_url(container, internal_port):
@@ -13,11 +13,35 @@ def published_url(container, internal_port):
     return f"http://127.0.0.1:{host_port}"
 
 
+def check_additional_providers(project):
+    for provider in PROVIDER_NAMES[1:]:
+        container = project + "-" + provider
+        settings = provider_environment(provider, "http://mock:9000")
+        settings.update(LLMPROXY_BOOTSTRAP_KEY=KEY, LLMPROXY_ADMIN_KEY=ADMIN_KEY)
+        command = ["docker", "run", "--detach", "--name", container, "--network", project + "_gateway",
+                   "--read-only", "--tmpfs", "/tmp", "--publish", "127.0.0.1::4000"]
+        for name, value in settings.items():
+            command.extend(["--env", name + "=" + value])
+        try:
+            subprocess.run(command + ["llmproxy:smoke"], check=True, capture_output=True, text=True)
+            base = published_url(container, 4000)
+            wait_ready(base)
+            check_http(base)
+            check_sdks(base)
+            check_persisted_usage(base)
+            print(f"Docker {provider}: API and three SDKs passed against the mock.", flush=True)
+        except Exception:
+            subprocess.run(["docker", "logs", "--tail", "100", container], check=False)
+            raise
+        finally:
+            subprocess.run(["docker", "rm", "--force", "--volumes", container], capture_output=True, check=False)
+
+
 def main():
     project = "llmproxy-smoke-" + uuid.uuid4().hex[:8]
     command = ["docker", "compose", "--project-name", project, "--env-file", "tests/docker/test.env",
                "-f", "docker-compose.yml", "-f", "tests/docker/docker-compose.test.yml"]
-    environment = os.environ.copy()
+    environment = isolated_environment()
     # Parent-shell provider credentials must never override the fake test environment.
     for line in (ROOT / "tests/docker/test.env").read_text().splitlines():
         if line and not line.startswith("#"):
@@ -87,6 +111,7 @@ def main():
         inspection = json.loads(subprocess.check_output(["docker", "inspect", container], text=True))[0]
         assert inspection["State"]["ExitCode"] == 0
         print("Docker non-root execution, health, PostgreSQL/SQLite persistence, Redis and graceful shutdown passed.", flush=True)
+        check_additional_providers(project)
     except Exception:
         subprocess.run(command + ["logs", "--tail", "100"], cwd=ROOT, env=environment, check=False)
         subprocess.run(["docker", "logs", "--tail", "100", standalone], check=False)
