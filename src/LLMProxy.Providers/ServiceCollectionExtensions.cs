@@ -1,6 +1,9 @@
+using Azure.Core;
+using Azure.Identity;
 using LLMProxy.Domain;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Http.Resilience;
 using Polly;
 
@@ -11,21 +14,52 @@ public static class ServiceCollectionExtensions
     public static IServiceCollection AddLlmProxyProviders(this IServiceCollection services, IConfiguration configuration)
     {
         var options = configuration.GetSection("LLMProxy:Providers").Get<ProviderOptions>() ?? new();
-        options.OpenAI.ApiKey = configuration["OPENAI_API_KEY"] ?? options.OpenAI.ApiKey;
-        options.Anthropic.ApiKey = configuration["ANTHROPIC_API_KEY"] ?? options.Anthropic.ApiKey;
-        options.Gemini.ApiKey = configuration["GEMINI_API_KEY"] ?? options.Gemini.ApiKey;
-        options.AzureOpenAI.ApiKey = configuration["AZURE_OPENAI_API_KEY"] ?? options.AzureOpenAI.ApiKey;
-        options.AzureOpenAI.BaseUrl = configuration["AZURE_OPENAI_ENDPOINT"] ?? options.AzureOpenAI.BaseUrl;
-        options.AzureOpenAI.ApiVersion = configuration["AZURE_OPENAI_API_VERSION"] ?? options.AzureOpenAI.ApiVersion;
+        var connections = new (string Name, string Prefix, ProviderConnectionOptions Connection)[]
+        {
+            ("openai", "OPENAI", options.OpenAI), ("anthropic", "ANTHROPIC", options.Anthropic),
+            ("gemini", "GEMINI", options.Gemini), ("azure", "AZURE_OPENAI", options.AzureOpenAI),
+            ("foundry", "FOUNDRY", options.Foundry), ("mistral", "MISTRAL", options.Mistral),
+            ("cohere", "COHERE", options.Cohere), ("deepseek", "DEEPSEEK", options.DeepSeek),
+            ("groq", "GROQ", options.Groq), ("ollama", "OLLAMA", options.Ollama)
+        };
+        foreach (var (name, prefix, connection) in connections)
+        {
+            connection.ApiKey = configuration[prefix + "_API_KEY"] ?? connection.ApiKey;
+            connection.BaseUrl = Nonempty(configuration[prefix + "_ENDPOINT"]) ?? connection.BaseUrl;
+            services.AddProviderHttpClient(name, options.Resilience);
+        }
+        options.AzureOpenAI.ApiVersion = Nonempty(configuration["AZURE_OPENAI_API_VERSION"]) ?? options.AzureOpenAI.ApiVersion;
+        options.Foundry.TokenScope = Nonempty(configuration["FOUNDRY_TOKEN_SCOPE"]) ?? options.Foundry.TokenScope;
+        if (Nonempty(configuration["FOUNDRY_AUTHENTICATION"]) is { } authentication)
+        {
+            if (!Enum.TryParse<FoundryAuthentication>(authentication, true, out var mode) || !Enum.IsDefined(mode))
+                throw new InvalidOperationException("FOUNDRY_AUTHENTICATION must be ApiKey or EntraId.");
+            options.Foundry.Authentication = mode;
+        }
+        if (Nonempty(configuration["OLLAMA_ALLOW_INSECURE_HTTP"]) is { } insecure)
+        {
+            if (!bool.TryParse(insecure, out var allow)) throw new InvalidOperationException("OLLAMA_ALLOW_INSECURE_HTTP must be true or false.");
+            options.Ollama.AllowInsecureHttp = allow;
+        }
+        if (options.Foundry.Authentication == FoundryAuthentication.EntraId)
+            services.TryAddSingleton<TokenCredential>(_ => new DefaultAzureCredential());
         services.AddSingleton(options);
         services.AddSingleton<ProviderHttpTransport>();
-        foreach (var name in new[] { "openai", "anthropic", "gemini", "azure" }) services.AddProviderHttpClient(name, options.Resilience);
         services.AddSingleton<ILlmProvider, OpenAiProvider>();
         services.AddSingleton<ILlmProvider, AnthropicProvider>();
         services.AddSingleton<ILlmProvider, GeminiProvider>();
         services.AddSingleton<ILlmProvider, AzureOpenAiProvider>();
+        services.AddSingleton<ILlmProvider>(provider => new FoundryProvider(provider.GetRequiredService<ProviderHttpTransport>(), options,
+            options.Foundry.Authentication == FoundryAuthentication.EntraId ? provider.GetRequiredService<TokenCredential>() : null));
+        services.AddSingleton<ILlmProvider, MistralProvider>();
+        services.AddSingleton<ILlmProvider, CohereProvider>();
+        services.AddSingleton<ILlmProvider, DeepSeekProvider>();
+        services.AddSingleton<ILlmProvider, GroqProvider>();
+        services.AddSingleton<ILlmProvider, OllamaProvider>();
         return services;
     }
+
+    private static string? Nonempty(string? value) => string.IsNullOrWhiteSpace(value) ? null : value;
 
     public static IHttpClientBuilder AddProviderHttpClient(this IServiceCollection services, string name, HttpResilienceOptions options)
     {

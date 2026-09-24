@@ -11,6 +11,12 @@ public sealed class ProviderTests
     [InlineData("azure", "/openai/deployments/upstream-model/chat/completions", "api-key")]
     [InlineData("anthropic", "/v1/messages", "x-api-key")]
     [InlineData("gemini", "/v1/models/upstream-model:generateContent", "x-goog-api-key")]
+    [InlineData("foundry", "/openai/v1/chat/completions", "Authorization")]
+    [InlineData("mistral", "/v1/chat/completions", "Authorization")]
+    [InlineData("cohere", "/v2/chat", "Authorization")]
+    [InlineData("deepseek", "/v1/chat/completions", "Authorization")]
+    [InlineData("groq", "/openai/v1/chat/completions", "Authorization")]
+    [InlineData("ollama", "/v1/chat/completions", "Authorization")]
     public async Task Native_requests_and_responses_are_translated(string name, string path, string keyHeader)
     {
         using var harness = new ProviderHarness(Responses.Body(name));
@@ -21,10 +27,15 @@ public sealed class ProviderTests
         Assert.Contains("fake-provider-secret", harness.Headers[keyHeader]);
         Assert.DoesNotContain("fake-provider-secret", harness.Uri.ToString());
         using var body = JsonDocument.Parse(harness.Body!);
-        if (name is "openai" or "azure")
+        if (name is "openai" or "azure" or "foundry" or "groq")
         {
             Assert.Equal(128, body.RootElement.GetProperty("max_completion_tokens").GetInt32());
             Assert.False(body.RootElement.TryGetProperty("max_tokens", out _));
+        }
+        if (name is "mistral" or "cohere" or "deepseek" or "ollama")
+        {
+            Assert.Equal(128, body.RootElement.GetProperty("max_tokens").GetInt32());
+            Assert.False(body.RootElement.TryGetProperty("max_completion_tokens", out _));
         }
         if (name == "anthropic")
         {
@@ -44,6 +55,12 @@ public sealed class ProviderTests
     [InlineData("azure")]
     [InlineData("anthropic")]
     [InlineData("gemini")]
+    [InlineData("foundry")]
+    [InlineData("mistral")]
+    [InlineData("cohere")]
+    [InlineData("deepseek")]
+    [InlineData("groq")]
+    [InlineData("ollama")]
     public async Task Streams_normalize_text_finish_reasons_and_token_usage(string name)
     {
         using var harness = new ProviderHarness(Responses.Stream(name), "text/event-stream");
@@ -53,19 +70,27 @@ public sealed class ProviderTests
         Assert.Contains(chunks, chunk => chunk.Delta?.Role == "assistant");
         Assert.Contains(chunks, chunk => chunk.FinishReason == "stop");
         Assert.Equal(TokenUsage.From(3, 2), chunks.Last(x => x.Usage is not null).Usage);
-        if (name is "openai" or "azure") Assert.Contains("include_usage", harness.Body!);
+        if (name is "openai" or "azure" or "foundry" or "deepseek" or "ollama") Assert.Contains("include_usage", harness.Body!);
+        if (name is "mistral" or "cohere" or "groq") Assert.DoesNotContain("stream_options", harness.Body!);
     }
 
     [Theory]
     [InlineData("openai")]
     [InlineData("anthropic")]
     [InlineData("gemini")]
+    [InlineData("foundry")]
+    [InlineData("mistral")]
+    [InlineData("cohere")]
+    [InlineData("deepseek")]
+    [InlineData("groq")]
+    [InlineData("ollama")]
     public async Task Truncated_streams_are_errors_instead_of_false_success(string name)
     {
         var data = name switch
         {
             "anthropic" => "data: {\"type\":\"message_start\",\"message\":{}}\n\n",
             "gemini" => "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Hi\"}]}}]}\n\n",
+            "cohere" => "data: {\"type\":\"message-start\",\"delta\":{\"message\":{\"role\":\"assistant\"}}}\n\n",
             _ => "data: {\"choices\":[{\"delta\":{\"content\":\"Hi\"}}]}\n\n"
         };
         using var harness = new ProviderHarness(data, "text/event-stream");

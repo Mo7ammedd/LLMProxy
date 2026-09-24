@@ -10,6 +10,7 @@ public sealed class ValidationTests
     [InlineData("{\"model\":\"fast\",\"messages\":[]}")]
     [InlineData("{\"model\":\"fast\",\"messages\":[null]}")]
     [InlineData("{\"model\":\"fast\",\"messages\":[{\"role\":\"user\",\"content\":true}]}")]
+    [InlineData("{\"model\":\"fast\",\"messages\":[{\"role\":\"user\",\"content\":\"Hi\",\"reasoning_content\":\"invalid-role\"}]}")]
     [InlineData("{\"model\":\"fast\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"image_url\"}]}]}")]
     [InlineData("{\"model\":\"fast\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":3,\"text\":\"hello\"}]}]}")]
     [InlineData("{\"model\":\"fast\",\"messages\":[{\"role\":\"user\",\"content\":\"hello\"}],\"response_format\":\"invalid\"}")]
@@ -41,5 +42,16 @@ public sealed class ValidationTests
     {
         var calculator = new CostCalculator(new ConfiguredPricing(TestData.Options()));
         Assert.Throws<InvalidOperationException>(() => calculator.Calculate(new ModelTarget("unknown", "unknown"), TokenUsage.From(1, 1)));
+    }
+
+    [Fact]
+    public void Tagged_models_use_escaped_pricing_keys_without_colliding_with_literal_percent_names()
+    {
+        var options = TestData.Options();
+        options.Pricing["local/model%3Atag"] = new PriceOptions { InputPerMillion = 1, OutputPerMillion = 2 };
+        options.Pricing["local/model%253Atag"] = new PriceOptions { InputPerMillion = 3, OutputPerMillion = 4 };
+        var costs = new CostCalculator(new ConfiguredPricing(options));
+        Assert.Equal(3m, costs.Calculate(new ModelTarget("local", "model:tag"), TokenUsage.From(1_000_000, 1_000_000)));
+        Assert.Equal(7m, costs.Calculate(new ModelTarget("local", "model%3Atag"), TokenUsage.From(1_000_000, 1_000_000)));
     }
 }

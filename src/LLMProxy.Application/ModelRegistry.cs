@@ -40,7 +40,10 @@ public sealed class ConfiguredPricing(GatewayOptions options) : IModelPricing
 
     private PriceOptions Get(string model)
     {
-        if (!options.Pricing.TryGetValue(model, out var price) || price.InputPerMillion < 0 || price.OutputPerMillion < 0)
+        // ':' separates .NET configuration paths even inside JSON dictionary keys (e.g. Ollama tags).
+        // Escape '%' first so literal percent-encoded model names remain distinct.
+        var key = model.Replace("%", "%25", StringComparison.Ordinal).Replace(":", "%3A", StringComparison.Ordinal);
+        if (!options.Pricing.TryGetValue(key, out var price) || price.InputPerMillion < 0 || price.OutputPerMillion < 0)
             throw new InvalidOperationException("Missing or invalid provider/model pricing configuration.");
         return price;
     }

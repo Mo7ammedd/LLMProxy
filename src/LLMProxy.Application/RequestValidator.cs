@@ -54,6 +54,8 @@ public sealed class RequestValidator(GatewayOptions options, IModelRegistry regi
                 || !p.TryGetProperty("text", out var text) || text.ValueKind != JsonValueKind.String))
                 Invalid("messages", "Only text content parts are supported.");
             if (message.Role != "assistant" && message.ToolCalls is { Count: > 0 }) Invalid("messages", "Only assistant messages may contain tool_calls.");
+            if (message.Role != "assistant" && message.ReasoningContent is not null)
+                Invalid("messages", "Only assistant messages may contain reasoning_content.");
             if (message.Role == "tool")
             {
                 if (message.ToolCallId is null || !pendingTools.Remove(message.ToolCallId)) Invalid("messages", "Tool results must reference an unresolved assistant tool call.");

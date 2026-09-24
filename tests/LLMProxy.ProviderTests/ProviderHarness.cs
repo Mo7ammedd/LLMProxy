@@ -18,7 +18,13 @@ internal sealed class ProviderHarness : IHttpClientFactory, IDisposable
         OpenAI = Connection(),
         Anthropic = Connection(),
         Gemini = Connection(),
-        AzureOpenAI = new AzureConnectionOptions { BaseUrl = "https://example.test/", ApiKey = "fake-provider-secret" }
+        AzureOpenAI = new AzureConnectionOptions { BaseUrl = "https://example.test/", ApiKey = "fake-provider-secret" },
+        Foundry = new FoundryConnectionOptions { BaseUrl = "https://example.test/", ApiKey = "fake-provider-secret" },
+        Mistral = Connection(),
+        Cohere = Connection("/v2"),
+        DeepSeek = Connection(),
+        Groq = Connection("/openai/v1"),
+        Ollama = new OllamaConnectionOptions { BaseUrl = "https://example.test/v1", ApiKey = "fake-provider-secret" }
     };
     public string? Body { get; private set; }
     public Uri? Uri { get; private set; }
@@ -41,6 +47,12 @@ internal sealed class ProviderHarness : IHttpClientFactory, IDisposable
         "anthropic" => new AnthropicProvider(new(this), Options),
         "gemini" => new GeminiProvider(new(this), Options),
         "azure" => new AzureOpenAiProvider(new(this), Options),
+        "foundry" => new FoundryProvider(new(this), Options),
+        "mistral" => new MistralProvider(new(this), Options),
+        "cohere" => new CohereProvider(new(this), Options),
+        "deepseek" => new DeepSeekProvider(new(this), Options),
+        "groq" => new GroqProvider(new(this), Options),
+        "ollama" => new OllamaProvider(new(this), Options),
         _ => throw new ArgumentOutOfRangeException(nameof(name))
     };
     public static LlmRequest Request(bool stream = false) => new()
@@ -51,7 +63,7 @@ internal sealed class ProviderHarness : IHttpClientFactory, IDisposable
         MaxTokens = 128
     };
     public void Dispose() => _client.Dispose();
-    private static ProviderConnectionOptions Connection() => new() { BaseUrl = "https://example.test/v1", ApiKey = "fake-provider-secret" };
+    private static ProviderConnectionOptions Connection(string path = "/v1") => new() { BaseUrl = "https://example.test" + path, ApiKey = "fake-provider-secret" };
 }
 
 internal static class Responses
@@ -59,10 +71,23 @@ internal static class Responses
     public const string OpenAi = """{"id":"chatcmpl-test","object":"chat.completion","created":1,"model":"upstream-model","choices":[{"index":0,"message":{"role":"assistant","content":"Hello"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}}""";
     public const string Anthropic = """{"id":"msg-test","type":"message","role":"assistant","content":[{"type":"text","text":"Hello"}],"stop_reason":"end_turn","usage":{"input_tokens":3,"output_tokens":2}}""";
     public const string Gemini = """{"candidates":[{"content":{"parts":[{"text":"Hello"}],"role":"model"},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":3,"candidatesTokenCount":2,"totalTokenCount":5}}""";
-    public static string Body(string provider) => provider switch { "anthropic" => Anthropic, "gemini" => Gemini, _ => OpenAi };
+    public const string Cohere = """{"id":"cohere-test","finish_reason":"COMPLETE","message":{"role":"assistant","content":[{"type":"text","text":"Hello"}]},"usage":{"tokens":{"input_tokens":3,"output_tokens":2},"billed_units":{"input_tokens":1,"output_tokens":1}}}""";
+    public static string Body(string provider) => provider switch { "anthropic" => Anthropic, "gemini" => Gemini, "cohere" => Cohere, _ => OpenAi };
 
     public static string Stream(string provider) => provider switch
     {
+        "cohere" => """
+            event: message-start
+            data: {"type":"message-start","delta":{"message":{"role":"assistant"}}}
+
+            event: content-delta
+            data: {"type":"content-delta","index":0,"delta":{"message":{"content":{"type":"text","text":"Hello"}}}}
+
+            event: message-end
+            data: {"type":"message-end","delta":{"finish_reason":"COMPLETE","usage":{"tokens":{"input_tokens":3,"output_tokens":2},"billed_units":{"input_tokens":1,"output_tokens":1}}}}
+
+
+            """,
         "anthropic" => """
             event: message_start
             data: {"type":"message_start","message":{"usage":{"input_tokens":3,"output_tokens":0}}}

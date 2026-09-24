@@ -29,6 +29,7 @@ public sealed class GatewayService(
                 await route.Provider.ChatCompletionAsync(request with { Model = route.Target.Model }, ct), timeout.Token);
             state.Usage = result.Usage;
             state.OutputBytes = result.Choices.Sum(c => Encoding.UTF8.GetByteCount(c.Message.Text())
+                + Encoding.UTF8.GetByteCount(c.Message.ReasoningContent ?? "")
                 + (c.Message.ToolCalls?.Sum(t => Encoding.UTF8.GetByteCount(t.Function.Arguments)) ?? 0));
             state.Success = true;
             return result with
@@ -95,6 +96,7 @@ public sealed class GatewayService(
                     state.HasFinalUsage = state.SawFinish;
                 }
                 state.OutputBytes += Encoding.UTF8.GetByteCount(chunk.Delta?.Content ?? "")
+                    + Encoding.UTF8.GetByteCount(chunk.Delta?.ReasoningContent ?? "")
                     + (chunk.Delta?.ToolCalls?.Sum(call => Encoding.UTF8.GetByteCount(call.Function?.Arguments ?? "")) ?? 0);
                 if (chunk.Delta is not null || chunk.FinishReason is not null) yield return chunk with { Usage = null };
                 bool hasNext;

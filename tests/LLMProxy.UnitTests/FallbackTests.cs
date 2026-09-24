@@ -35,6 +35,20 @@ public sealed class FallbackTests
     }
 
     [Fact]
+    public async Task Missing_usage_accounts_for_reasoning_as_well_as_visible_output()
+    {
+        using var fixture = new Fixture();
+        fixture.First.Complete = (request, _) => Task.FromResult(new LlmResponse("upstream", request.Model, 1,
+            [new ChatChoice(0, ChatMessage.FromText("assistant", "OK") with { ReasoningContent = "why" }, "stop")], TokenUsage.Zero));
+        var response = await fixture.Service.CompleteAsync(TestData.Request(), fixture.Context, default);
+        Assert.Equal(5, response.Usage.OutputTokens);
+        var record = Assert.Single(fixture.Store.Usage);
+        Assert.True(record.UsageEstimated);
+        Assert.Equal(5, record.OutputTokens);
+        Assert.Equal(response.Usage.TotalTokens, record.TotalTokens);
+    }
+
+    [Fact]
     public async Task Streams_can_fall_back_before_the_first_chunk()
     {
         using var fixture = new Fixture();

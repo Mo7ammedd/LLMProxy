@@ -35,6 +35,7 @@ public sealed record ChatMessage
     public string? Name { get; init; }
     public string? ToolCallId { get; init; }
     public List<ToolCall>? ToolCalls { get; init; }
+    public string? ReasoningContent { get; init; }
 
     public string Text() => Content?.ValueKind switch
     {
@@ -58,7 +59,8 @@ public sealed record ToolCall(string Id, string Type, FunctionCall Function, Jso
 public sealed record FunctionCall(string Name, string Arguments);
 public sealed record ToolCallDelta(int Index, string? Id = null, string? Type = null, FunctionDelta? Function = null, JsonElement? ExtraContent = null);
 public sealed record FunctionDelta(string? Name = null, string? Arguments = null);
-public sealed record ChatDelta(string? Role = null, string? Content = null, List<ToolCallDelta>? ToolCalls = null);
+public sealed record ChatDelta(string? Role = null, string? Content = null, List<ToolCallDelta>? ToolCalls = null,
+    string? ReasoningContent = null);
 
 public sealed record TokenUsage(
     [property: JsonPropertyName("prompt_tokens")] long InputTokens,

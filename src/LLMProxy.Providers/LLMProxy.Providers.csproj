@@ -3,5 +3,6 @@
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <ProjectReference Include="../LLMProxy.Domain/LLMProxy.Domain.csproj" />
     <PackageReference Include="Microsoft.Extensions.Http.Resilience" />
+    <PackageReference Include="Azure.Identity" />
   </ItemGroup>
 </Project>
