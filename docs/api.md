@@ -178,3 +178,5 @@ Supply the full policy when updating. Omitted nullable limits become unlimited; 
 `GET /admin/usage?api_key_id=<uuid>&limit=100` preserves the legacy array of recent admitted requests, up to 1,000 per request. Records include request/key IDs, model, provider, operation, input/output/total tokens, latency, status/error, estimated cost, `usage_estimated` and UTC creation time.
 
 Use `/admin/usage/page` for cursor pagination, `/admin/usage/summary` for rollups and `/admin/usage/export` for CSV. `/admin/keys/page` and `/admin/audit` also paginate. `/admin/usage/{id}/attempts` lists retries/fallback attempts, and `/admin/billing/reconcile` applies invoice adjustments. `/admin/keys/{id}/rotate` rotates credentials without resetting allowances. [Complete management endpoint reference](expanded-api.md#reports-and-reconciliation).
+
+Provider pool management, live access checks and operational alert endpoints are documented in [provider operations](provider-operations.md) and [OpenAPI](openapi.yaml).

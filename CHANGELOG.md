@@ -4,9 +4,33 @@ User-visible changes are grouped by release. Git tags use `vMAJOR.MINOR.PATCH`; 
 
 ## Unreleased
 
-- Make Docker Hub the default for pinned Docker/Compose quick starts and document image provenance and upgrades.
-- Publish verified AMD64/ARM64 builds to Docker Hub and GHCR from CI, verify both registry manifests and maintain the Docker Hub overview from source.
-- Add release/build/image/license badges, a release guide, bug and feature forms, and a pull request template.
+No changes yet.
+
+## [0.3.0] — 2026-09-24
+
+### Added
+
+- Provider dashboard and management API for adding encrypted upstream keys and enabling/disabling configuration or managed keys, with fingerprints, per-key usage, failures and cooldowns.
+- AES-256-GCM credential storage, transactional pool limits and audit, plus automatic propagation of managed key changes across replicas.
+- Redis-backed provider-key rotation and cooldowns scoped to the actual account. Rotation and cooldowns survive catalog reload; existing streams retain their credentials.
+- Opt-in credential/model checks, with one bounded attempt per enabled key and optional small generation probes for configured models.
+- Durable budget, upstream-error, latency and exhausted-pool alerts with acknowledgment, recovery, deduplication across replicas, and optional leased webhook delivery.
+- Image signatures and scan attestations in Docker Hub and GHCR, SPDX SBOMs, build provenance, full vulnerability reports and checksums attached to releases.
+- Native and final-image vulnerability gates for fixable HIGH/CRITICAL findings, pinned action revisions, pinned build/runtime images and pinned SBOM tooling.
+- Required main-branch CI checks, enforced administrator protection, secret scanning/push protection, private vulnerability reporting and automated security updates.
+- Technical operations/API documentation, updated OpenAPI, v0.3 Docker/Compose examples and automated Docker Hub overview publication.
+
+### Upgrading from 0.2.0
+
+1. Drain existing replicas and back up the database/configuration. Keep the existing data volumes and Redis namespace.
+2. Deploy `mohammedtv/llmproxy:0.3.0` (or the verified release digest) and apply the additive `ProviderOperations` migration once for your storage engine. Controlled deployments should run `migrate` before restarting replicas with automatic migration disabled.
+3. Existing single keys and key arrays remain compatible. To add keys through the console, generate one base64-encoded 32-byte encryption key and configure `LLMPROXY_PROVIDER_KEY_ENCRYPTION_KEY` identically on all replicas. Back it up separately from the database. Do not replace it without re-encrypting stored keys.
+4. Review alert thresholds. Dashboard evaluation is enabled by default; external delivery and live provider checks remain opt-in. Compose forwards the new settings in `.env.example`.
+5. Verify readiness, advertised models, existing client traffic, provider key status and alerts. PostgreSQL deployments now share upstream key rotation/cooldowns through Redis; standalone deployments retain local state.
+
+File/environment configuration reload remains per replica. Managed key changes are refreshed before authenticated HTTP inference and every five seconds for background workers. An in-flight request retains its original credentials. Rollback requires the old image/configuration and pre-upgrade database backup; preserve the encryption key with encrypted-key backups.
+
+[Provider operations and alert settings](docs/provider-operations.md) · [Signature verification and scan policy](docs/releases.md#signatures-sboms-and-vulnerability-policy)
 
 ## [0.2.0] — 2026-09-24
 
@@ -51,5 +75,6 @@ The release source is commit `1911fc881e39bbe033a7fa57a4d7ce9573a05c6c`. Its [su
 - SQLite standalone storage or PostgreSQL plus Redis, migrations, usage/cost accounting, quota recovery, health checks and telemetry.
 - Docker/Compose deployment, GHCR publication, Python/TypeScript/C# SDK examples, and initial API, configuration, provider, architecture and operations documentation.
 
+[0.3.0]: https://github.com/Mo7ammedd/LLMProxy/releases/tag/v0.3.0
 [0.2.0]: https://github.com/Mo7ammedd/LLMProxy/releases/tag/v0.2.0
 [0.1.0]: https://github.com/Mo7ammedd/LLMProxy/releases/tag/v0.1.0

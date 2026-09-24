@@ -10,6 +10,24 @@ public static class ProviderAccounts
 {
     public static readonly string[] BuiltIns = ["openai", "anthropic", "gemini", "azure", "foundry", "mistral", "cohere", "deepseek", "groq", "ollama"];
 
+    public static IEnumerable<(string Name, string Adapter, ProviderConnectionOptions Connection)> Connections(ProviderOptions options)
+    {
+        yield return ("openai", "openai", options.OpenAI);
+        yield return ("anthropic", "anthropic", options.Anthropic);
+        yield return ("gemini", "gemini", options.Gemini);
+        yield return ("azure", "azure", options.AzureOpenAI);
+        yield return ("foundry", "foundry", options.Foundry);
+        yield return ("mistral", "mistral", options.Mistral);
+        yield return ("cohere", "cohere", options.Cohere);
+        yield return ("deepseek", "deepseek", options.DeepSeek);
+        yield return ("groq", "groq", options.Groq);
+        yield return ("ollama", "ollama", options.Ollama);
+        foreach (var (name, account) in options.Accounts) yield return (name, account.Adapter, account);
+    }
+
+    public static string[] Keys(ProviderConnectionOptions connection) => connection.ApiKeys.Length > 0
+        ? connection.ApiKeys : string.IsNullOrWhiteSpace(connection.ApiKey) ? [] : [connection.ApiKey];
+
     public static ProviderOptions Read(IConfiguration configuration)
     {
         var options = configuration.GetSection("LLMProxy:Providers").Get<ProviderOptions>() ?? new();
@@ -67,7 +85,7 @@ public static class ProviderAccounts
     };
 
     public static ILlmProvider CreateAccount(string name, ProviderAccountOptions account, IHttpClientFactory clients, TokenCredential? credential,
-        TimeProvider? time = null)
+        TimeProvider? time = null, IProviderPoolState? poolState = null)
     {
         var options = new ProviderOptions();
         switch (account.Adapter)
@@ -110,7 +128,7 @@ public static class ProviderAccounts
                     AllowInsecureHttp = account.AllowInsecureHttp
                 }; break;
         }
-        return new NamedProvider(name, Create(account.Adapter, options, new ProviderHttpTransport(new AccountClients(name, clients), time), credential));
+        return new NamedProvider(name, Create(account.Adapter, options, new ProviderHttpTransport(new AccountClients(name, clients), time, poolState, name), credential));
     }
 
     private sealed class AccountClients(string account, IHttpClientFactory inner) : IHttpClientFactory

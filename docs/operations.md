@@ -4,7 +4,7 @@
 
 Use the Compose stack, or connect the image to external PostgreSQL and Redis, for production and multiple replicas. Keep model mappings, pricing and Redis namespace consistent across replicas. A single standalone container stores data in SQLite under `/data`; mount a named volume and do not share that SQLite file across running gateway processes.
 
-The public release image is `mohammedtv/llmproxy:0.2.0`, with native `linux/amd64` and `linux/arm64` support. The Compose defaults use this pinned release. See [release tags and digests](releases.md) for GHCR alternatives and the [0.1.0 upgrade notes](../CHANGELOG.md#upgrading-from-010) before migrating existing data.
+The public release image is `mohammedtv/llmproxy:0.3.0`, with native `linux/amd64` and `linux/arm64` support. The Compose defaults use this pinned release. See [release tags and digests](releases.md) for GHCR alternatives and the [0.2.0 upgrade notes](../CHANGELOG.md#upgrading-from-020) before migrating existing data.
 
 The image uses a multi-stage build and .NET's minimal chiseled runtime. It runs as UID/GID `1654:1654` with no shell or package manager. Compose also disables additional capabilities and uses a read-only root filesystem. Use `docker exec llmproxy dotnet LLMProxy.Server.dll ...` for CLI operations rather than expecting `/bin/sh` in the image.
 
@@ -13,7 +13,7 @@ For a different internal port:
 ```bash
 docker run -d --name llmproxy -p 8080:8080 --env-file .env \
   -e ASPNETCORE_HTTP_PORTS=8080 -v llmproxy-data:/data \
-  mohammedtv/llmproxy:0.2.0
+  mohammedtv/llmproxy:0.3.0
 ```
 
 The built-in health command derives its port from `ASPNETCORE_HTTP_PORTS` or HTTP `ASPNETCORE_URLS`. For unusual bindings or HTTPS-only listeners, supply a reachable `LLMPROXY_HEALTH_URL`.
@@ -150,3 +150,7 @@ python scripts/load_probe.py --url http://127.0.0.1:4000 \
 ```
 
 Repeat `--url` to distribute traffic across instances. This probe makes actual requests to the selected gateway, so use the intended test provider configuration and adequate test allowances. CI includes the recovery drill and native ARM64/AMD64 container and SDK smoke jobs. A passing local source run does not establish that the remote platform jobs have passed.
+
+## Provider management and operational alerts
+
+See [provider operations](provider-operations.md) for encryption-key backup requirements, automatic managed-key propagation, shared Redis cooldowns, optional live checks and budget/error/latency/pool alerts. The `ProviderOperations` migration adds provider credentials, revision state and durable alert tables to both storage engines. Live checks and webhook delivery require explicit deployment configuration. See [release verification](releases.md#signatures-sboms-and-vulnerability-policy) before deploying a new image.

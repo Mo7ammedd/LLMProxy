@@ -15,7 +15,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b'{"status":"ok"}')
+        self.wfile.write(b'{"data":[{"id":"fixture-model"}]}' if self.path.endswith('/models') else b'{"status":"ok"}')
 
     def do_POST(self):
         if self.path not in ("/v1/chat/completions", "/openai/v1/chat/completions", "/v2/chat",

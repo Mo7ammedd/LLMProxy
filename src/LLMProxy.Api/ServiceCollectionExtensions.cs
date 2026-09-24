@@ -74,6 +74,12 @@ public static class ServiceCollectionExtensions
         app.UseAuthentication();
         app.UseMiddleware<AuditMiddleware>();
         app.UseAuthorization();
+        app.Use(async (context, next) =>
+        {
+            if (context.User.Identity?.IsAuthenticated == true && context.Request.Path.StartsWithSegments("/v1"))
+                await context.RequestServices.GetRequiredService<IRuntimeConfiguration>().RefreshProviderKeysAsync(context.RequestAborted);
+            await next(context);
+        });
         app.MapLlmProxy();
         return app;
     }

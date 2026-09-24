@@ -4,7 +4,7 @@ import subprocess
 import urllib.error
 import uuid
 from smoke_common import (ADMIN_KEY, KEY, PROVIDER_NAMES, ROOT, check_http, check_persisted_usage,
-                          check_sdks, check_protocol_sdks, isolated_environment, provider_environment, request, wait_ready)
+                          check_sdks, check_protocol_sdks, check_provider_operations, isolated_environment, provider_environment, request, wait_ready)
 
 
 def published_url(container, internal_port):
@@ -61,6 +61,7 @@ def main():
         check_http(base)
         check_sdks(base)
         count = check_persisted_usage(base)
+        check_provider_operations(base)
         container = compose("ps", "--quiet", "llmproxy", capture_output=True, text=True).stdout.strip()
         inspection = json.loads(subprocess.check_output(["docker", "inspect", container], text=True))[0]
         assert inspection["Config"]["User"] not in ("", "0", "root", "0:0")

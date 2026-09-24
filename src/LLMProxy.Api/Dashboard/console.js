@@ -1,8 +1,8 @@
 "use strict";
 const $ = id => document.getElementById(id);
 let token = "", role = "", tab = "overview", cursor = null, nextCursor = null, history = [], editingKey = null;
-const titles = {overview:["Overview","Requests, tokens and estimated spend."],usage:["Usage","Request history and accounting details."],keys:["API keys","Access policies, expiration and spending allowances."],operators:["Operators","People who can manage this gateway."],audit:["Audit history","Management actions and rejected requests."],models:["Models & routing","Public aliases and their available provider targets."]};
-let toastTimer;
+const titles = {overview:["Overview","Requests, tokens and estimated spend."],usage:["Usage","Request history and accounting details."],keys:["API keys","Access policies, expiration and spending allowances."],operators:["Operators","People who can manage this gateway."],audit:["Audit history","Management actions and rejected requests."],providers:["Providers","Manage upstream keys and inspect the last 24 hours of provider usage."],alerts:["Alerts","Current incidents and the latest resolved incidents."],models:["Models & routing","Public aliases and their available provider targets."]};
+let toastTimer, providerForKey = null, providerForCheck = null;
 function notify(message, error = false) {
   $("message").textContent = message; $("message").classList.toggle("error",error); $("message").hidden=false;
   clearTimeout(toastTimer); toastTimer=setTimeout(()=>$("message").hidden=true,7000);
@@ -35,7 +35,7 @@ function filters() {
 }
 function signOut() {
   token="";role="";$("console").hidden=true;$("signin").hidden=false;
-  $("secret-value").value="";document.querySelectorAll("dialog[open]").forEach(dialog=>dialog.close());
+  $("secret-value").value="";$("provider-key-form").reset();$("provider-check-results").textContent="";document.querySelectorAll("dialog[open]").forEach(dialog=>dialog.close());
 }
 async function signedIn() {
   const me=await json("/admin/auth/me"); role=me.role;
@@ -66,6 +66,8 @@ async function openTab(name) {
   $("new-key").hidden=name!=="keys"||role==="auditor";
   $("new-operator").hidden=name!=="operators"||role!=="administrator";
   $("reload").hidden=name!=="models"||role!=="administrator";
+  $("evaluate-alerts").hidden=name!=="alerts"||role!=="administrator";
+  $("record-note").hidden=true;
   $("records-title").textContent=titles[name][0];
   await load();
 }
@@ -90,6 +92,17 @@ async function load() {
     if(tab==="audit"){page=await json("/admin/audit?"+query);rows=page.data;head=["Time","Actor","Action","Resource","Status"];render=x=>[date(x.created_at),x.actor,x.action,x.resource,x.status_code||"Started"];}
     if(tab==="operators"){rows=await json("/admin/operators");head=["Username","Role","Status","Created","Actions"];render=x=>[x.username,x.role,x.enabled?"Enabled":"Disabled",date(x.created_at),operatorActions(x)];}
     if(tab==="models"){rows=await json("/admin/models");head=["Alias","Routing","Concurrency","Targets","Capabilities"];render=x=>[x.name,x.routing,x.max_concurrent_requests,x.targets.map(t=>t.provider+" / "+t.model).join("\n"),x.targets.map(t=>t.provider+": "+t.capabilities).join("\n")];}
+    if(tab==="providers"){
+      rows=await json("/admin/providers");head=["Account / adapter","Status","Keys · last 24 hours","Actions"];
+      render=x=>[x.name+" / "+x.adapter+"\n"+(x.endpoint||"Set endpoint in configuration"),x.configured?"Configured":"Unavailable",providerKeys(x),providerActions(x)];
+      $("record-note").hidden=false;$("record-note").textContent="Key status uses fingerprints. Usage includes recorded upstream attempts; in-progress streams appear after accounting completes.";
+    }
+    if(tab==="alerts"){
+      const settings=await json("/admin/alerts/settings");rows=await json("/admin/alerts?resolved=true&limit=100");
+      head=["Started","Severity / kind","Resource","Status","Details","Actions"];
+      render=x=>[date(x.started_at),x.severity+" / "+x.kind,x.resource,x.resolved_at?"Resolved "+date(x.resolved_at):x.acknowledged_at?"Acknowledged":"Active",x.message,alertActions(x)];
+      $("record-note").hidden=false;$("record-note").textContent=settings.enabled?"Evaluated every "+settings.evaluation_seconds+"s. Budget: "+settings.budget_percent+"%. Errors: "+settings.error_percent+"%. Average latency: "+number(settings.average_latency_ms)+"ms. Window: "+settings.window_minutes+"min, minimum "+settings.minimum_attempts+" attempts. Webhook "+(settings.webhook_configured?"configured.":"not configured."):"Alert evaluation is disabled.";
+    }
     drawTable(head,rows.map(render));
     nextCursor=page?.next_cursor||null;$("next").disabled=!nextCursor;$("previous").disabled=!history.length;
     $("record-count").textContent=rows.length?number(rows.length)+" records":"No records match these filters.";
@@ -151,4 +164,58 @@ $("reload").addEventListener("click",guard(async()=>{const result=await json("/a
 $("export").addEventListener("click",guard(async()=>{
   const response=await request("/admin/usage/export?"+filters()),url=URL.createObjectURL(await response.blob()),link=document.createElement("a");
   link.href=url;link.download="llmproxy-usage.csv";link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+}));
+
+function providerKeys(provider) {
+  const container=document.createElement("div");container.className="provider-keys";
+  if(!provider.keys.length){container.textContent="No API keys configured.";return container;}
+  for(const key of provider.keys){
+    const row=document.createElement("div"),identity=document.createElement("code"),detail=document.createElement("p");
+    identity.textContent=key.id;detail.textContent=(key.label?key.label+" · ":"")+key.source+" · "+(!key.enabled?"Disabled":key.cooldown_until?"Cooling until "+date(key.cooldown_until):"Available")+" · "+number(key.attempts)+" attempts · "+number(key.failures)+" failures · "+number(key.input_tokens+key.output_tokens)+" tokens · "+money(key.cost);
+    row.append(identity,detail);
+    if(role==="administrator")row.append(button(key.enabled?"Disable":"Enable",async()=>{
+      await json("/admin/providers/"+encodeURIComponent(provider.name)+"/keys/"+key.id,{method:"PUT",body:JSON.stringify({enabled:!key.enabled,label:key.label})});await load();
+    }));container.append(row);
+  }return container;
+}
+function providerActions(provider) {
+  const actions=document.createElement("div");if(role!=="administrator")return actions;
+  if(provider.key_management_available)actions.append(button("Add key",()=>{
+    providerForKey=provider.name;$("provider-key-account").textContent=provider.name;$("provider-key-form").reset();$("provider-key-dialog").showModal();
+  }));
+  if(provider.live_checks_enabled&&provider.configured)actions.append(button("Check access",async()=>{
+    providerForCheck=provider.name;$("provider-check-account").textContent=provider.name;$("provider-check-results").textContent="";
+    const select=$("provider-check-model");select.replaceChildren();
+    const discovery=document.createElement("option");discovery.value="";discovery.textContent="Discover models (no generation)";select.append(discovery);
+    const models=await json("/admin/models"),names=new Set(models.flatMap(m=>m.targets.filter(t=>t.provider===provider.name).map(t=>t.model)));
+    for(const name of names){const option=document.createElement("option");option.value=name;option.textContent="Generate with "+name;select.append(option);}
+    $("provider-check-dialog").showModal();
+  }));
+  if(!provider.key_management_available){const note=document.createElement("small");note.textContent="Key storage requires an encryption key and API-key authentication.";actions.append(note);}
+  return actions;
+}
+$("provider-key-form").addEventListener("submit",guard(async()=>{
+  const form=$("provider-key-form"),body=Object.fromEntries(new FormData(form));
+  try {await json("/admin/providers/"+encodeURIComponent(providerForKey)+"/keys",{method:"POST",body:JSON.stringify(body)});}
+  finally {form.elements.key.value="";}
+  form.reset();$("provider-key-dialog").close();notify("Provider key added.");await load();
+}));
+$("provider-key-dialog").addEventListener("close",()=>$("provider-key-form").reset());
+$("provider-check-form").addEventListener("submit",guard(async()=>{
+  $("run-provider-check").disabled=true;$("provider-check-results").textContent="Checking…";
+  try {
+    const model=$("provider-check-model").value;
+    const results=await json("/admin/providers/"+encodeURIComponent(providerForCheck)+"/check",{method:"POST",body:JSON.stringify({model:model||null})});
+    $("provider-check-results").textContent=results.map(x=>x.key_id+" · "+x.code+" · "+number(x.latency_ms)+"ms"+(x.models.length?"\n"+x.models.join(", "):"")).join("\n\n");
+  }catch(error){$("provider-check-results").textContent="Check failed.";throw error;}
+  finally {$("run-provider-check").disabled=false;}
+}));
+function alertActions(alert) {
+  const actions=document.createElement("div");
+  if(role!=="auditor"&&!alert.resolved_at&&!alert.acknowledged_at)actions.append(button("Acknowledge",async()=>{
+    await json("/admin/alerts/"+alert.id+"/acknowledge",{method:"POST"});await load();
+  }));return actions;
+}
+$("evaluate-alerts").addEventListener("click",guard(async()=>{
+  await json("/admin/alerts/evaluate",{method:"POST"});await load();notify("Alert evaluation completed.");
 }));

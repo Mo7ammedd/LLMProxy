@@ -26,6 +26,50 @@ public static class ManagementEndpoints
             return Results.Json(await operators.LoginAsync(body, http.RequestAborted), LlmJson.Options);
         }).AllowAnonymous();
         var admin = endpoints.MapGroup("/admin").RequireAuthorization("Admin");
+        admin.MapGet("/alerts", async (HttpContext http, IAlertStore store, bool? resolved, int? limit) =>
+            Results.Json(await store.ListAsync(resolved ?? false, limit ?? 100, http.RequestAborted), LlmJson.Options));
+        admin.MapGet("/alerts/settings", (AlertOptions options) => Results.Json(new
+        {
+            options.Enabled,
+            options.EvaluationSeconds,
+            options.WindowMinutes,
+            options.MinimumAttempts,
+            options.BudgetPercent,
+            options.ErrorPercent,
+            options.AverageLatencyMs,
+            webhook_configured = options.WebhookUrl.Length > 0
+        }, LlmJson.Options));
+        admin.MapPost("/alerts/evaluate", async (HttpContext http, AlertService alerts) =>
+        {
+            await alerts.EvaluateAsync(http.RequestAborted);
+            return Results.NoContent();
+        }).RequireAuthorization("AdminOperators");
+        admin.MapPost("/alerts/{id:guid}/acknowledge", async (Guid id, HttpContext http, IAlertStore store, TimeProvider time) =>
+        {
+            await store.AcknowledgeAsync(id, http.User.FindFirstValue(ClaimTypes.NameIdentifier)!, time.GetUtcNow(), http.RequestAborted);
+            return Results.NoContent();
+        }).RequireAuthorization("AdminWrite");
+        admin.MapGet("/providers", async (HttpContext http, IProviderOperations operations) =>
+            Results.Json(await operations.ListAsync(http.RequestAborted), LlmJson.Options));
+        admin.MapPost("/providers/{provider}/keys", async (string provider, HttpContext http, IProviderOperations operations) =>
+        {
+            await operations.AddKeyAsync(provider, await GatewayEndpoints.ReadAsync<AddProviderKey>(http),
+                http.User.FindFirstValue(ClaimTypes.NameIdentifier)!, http.RequestAborted);
+            return Results.NoContent();
+        }).RequireAuthorization("AdminOperators");
+        admin.MapPut("/providers/{provider}/keys/{keyId}", async (string provider, string keyId, HttpContext http, IProviderOperations operations) =>
+        {
+            await operations.UpdateKeyAsync(provider, keyId, await GatewayEndpoints.ReadAsync<UpdateProviderKey>(http),
+                http.User.FindFirstValue(ClaimTypes.NameIdentifier)!, http.RequestAborted);
+            return Results.NoContent();
+        }).RequireAuthorization("AdminOperators");
+        admin.MapPost("/providers/{provider}/check", async (string provider, HttpContext http, IProviderOperations operations, IRateLimiter limiter) =>
+        {
+            var decision = await limiter.AcquireAsync([new RateLimitScope("provider-check:" + provider, 2)], http.RequestAborted);
+            if (!decision.Allowed) throw new GatewayException("Provider checks are limited to two per minute per account.", "rate_limit_exceeded", 429)
+            { RetryAfterSeconds = decision.RetryAfterSeconds };
+            return Results.Json(await operations.CheckAsync(provider, await GatewayEndpoints.ReadAsync<ProviderCheckRequest>(http), http.RequestAborted), LlmJson.Options);
+        }).RequireAuthorization("AdminOperators");
         admin.MapPost("/config/reload", async (HttpContext http, IRuntimeConfiguration configuration) =>
             Results.Json(await configuration.ReloadAsync(http.RequestAborted), LlmJson.Options)).RequireAuthorization("AdminOperators");
         admin.MapGet("/auth/me", (HttpContext http) => Results.Json(new

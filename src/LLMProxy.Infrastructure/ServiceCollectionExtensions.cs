@@ -31,6 +31,7 @@ public static class ServiceCollectionExtensions
             services.AddSingleton<IRateLimiter, MemoryRateLimiter>();
             services.AddSingleton<IRoutingState, MemoryRoutingState>();
             services.AddSingleton<IConcurrencyLimiter, MemoryConcurrencyLimiter>();
+            services.AddSingleton<IProviderPoolState, MemoryProviderPoolState>();
         }
         else
         {
@@ -52,12 +53,16 @@ public static class ServiceCollectionExtensions
             services.AddSingleton<IRateLimiter, RedisRateLimiter>();
             services.AddSingleton<IRoutingState, RedisRoutingState>();
             services.AddSingleton<IConcurrencyLimiter, RedisConcurrencyLimiter>();
+            services.AddSingleton<IProviderPoolState, RedisProviderPoolState>();
             services.AddHealthChecks().AddCheck<RedisHealthCheck>("redis", tags: ["ready"], timeout: TimeSpan.FromSeconds(5));
         }
         services.AddSingleton<EfGatewayStore>();
         services.AddSingleton<IGatewayStore>(sp => sp.GetRequiredService<EfGatewayStore>());
         services.AddSingleton<IManagementStore>(sp => sp.GetRequiredService<EfGatewayStore>());
         services.AddSingleton<IBatchStore>(sp => sp.GetRequiredService<EfGatewayStore>());
+        services.AddSingleton<IProviderOperationsStore>(sp => sp.GetRequiredService<EfGatewayStore>());
+        services.AddSingleton<IAlertStore>(sp => sp.GetRequiredService<EfGatewayStore>());
+        services.AddSingleton<IProviderSecretProtector, ProviderSecretProtector>();
         services.AddSingleton<StorageInitializer>();
         services.AddHostedService<ReservationRecoveryService>();
         services.AddHostedService<RetentionService>();

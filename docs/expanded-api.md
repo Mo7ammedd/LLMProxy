@@ -161,3 +161,7 @@ These are gateway-managed batches. They use ordinary provider requests and per-i
 Batch input and output bodies are intentionally persisted in the database and backups. They are available only through their owning gateway key. Finished jobs/results and unreferenced uploaded files are retained for seven days by default. Usage defaults to 90 days and audit to 365 days; see [retention settings](configuration.md#storage). Download needed results before expiry.
 
 Protocol references: [OpenAI Embeddings](https://developers.openai.com/api/reference/resources/embeddings/methods/create), [Responses](https://developers.openai.com/api/reference/resources/responses/methods/create) and [Batches](https://developers.openai.com/api/reference/resources/batches/methods/create). The gateway supports the subsets and operational limits described above.
+
+## Provider operations and alerts
+
+The `/admin/providers` and `/admin/alerts` APIs add encrypted upstream credential management, per-key statistics, optional live access checks and durable incidents. See the [complete reference](provider-operations.md). Provider mutation/checks require `administrator`; alert acknowledgment allows `administrator` or `operator`.

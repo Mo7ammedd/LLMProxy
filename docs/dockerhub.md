@@ -8,16 +8,16 @@ Self-hosted, OpenAI-compatible LLM gateway built with C# and .NET 10. Applicatio
 
 | Tag | Platforms | Contents |
 | --- | --- | --- |
-| `0.2.0` | `linux/amd64`, `linux/arm64` | Version 0.2.0, including multiple keys per provider |
+| `0.3.0` | `linux/amd64`, `linux/arm64` | Provider key dashboard, shared pools, alerts and signed/scanned images |
 | `latest` | `linux/amd64`, `linux/arm64` | Successful main builds and stable releases; use a full version or digest to pin a deployment |
 
-Version 0.2.0 is built from [commit 1911fc8](https://github.com/Mo7ammedd/LLMProxy/commit/1911fc881e39bbe033a7fa57a4d7ce9573a05c6c). The image passed the repository's [CI checks](https://github.com/Mo7ammedd/LLMProxy/actions/runs/35991763024), including native AMD64 and ARM64 container and SDK integration tests.
+Version 0.3.0 is built from [commit 1911fc8](https://github.com/Mo7ammedd/LLMProxy/commit/1911fc881e39bbe033a7fa57a4d7ce9573a05c6c). The image passed the repository's [CI checks](https://github.com/Mo7ammedd/LLMProxy/actions/runs/35991763024), including native AMD64 and ARM64 container and SDK integration tests.
 
 ```bash
-docker pull mohammedtv/llmproxy:0.2.0
+docker pull mohammedtv/llmproxy:0.3.0
 ```
 
-Version 0.2.0's multi-platform digest is `sha256:a8bd1b3e93b12549733b86fbb0be9809704924e2a2e27bee075df4c7ab56d3db`. GitHub source tags have a `v` prefix, while Docker Hub version tags omit it. See the [release guide](https://github.com/Mo7ammedd/LLMProxy/blob/main/docs/releases.md) for tag conventions and verified builds.
+Version 0.3.0's multi-platform digest is `sha256:a8bd1b3e93b12549733b86fbb0be9809704924e2a2e27bee075df4c7ab56d3db`. GitHub source tags have a `v` prefix, while Docker Hub version tags omit it. See the [release guide](https://github.com/Mo7ammedd/LLMProxy/blob/main/docs/releases.md) for tag conventions and verified builds.
 
 ## Quick start
 
@@ -36,7 +36,7 @@ docker run -d \
   -p 4000:4000 \
   --env-file .env \
   -v llmproxy-data:/data \
-  mohammedtv/llmproxy:0.2.0
+  mohammedtv/llmproxy:0.3.0
 
 docker exec llmproxy dotnet LLMProxy.Server.dll keys create \
   --owner my-app --models fast,reasoning,embeddings --rpm 60
@@ -62,7 +62,7 @@ LLMProxy__Providers__OpenAI__ApiKeys__1=provider-key-2
 LLMProxy__Providers__OpenAI__ApiKeyCooldownSeconds=30
 ```
 
-A nonempty pool replaces the single `OPENAI_API_KEY`. Requests rotate among available keys. Authentication failures and rate limits switch to another key and cool the affected credential; transient failures use bounded retries before failover. Each key has a separate circuit breaker. Rotation and cooldowns are local to each gateway process.
+A nonempty pool replaces the single `OPENAI_API_KEY`. Requests rotate among available keys. Authentication failures and rate limits switch to another key and cool the affected credential; transient failures use bounded retries before failover. Each key has a separate circuit breaker. Rotation and cooldowns are shared through Redis in PostgreSQL mode and local to the process in standalone mode.
 
 Named provider accounts support separate endpoints, credentials, prices and concurrency scopes for the same adapter. Compose requires these indexed variables to be explicitly forwarded in a service environment override. See [pool configuration and Compose examples](https://github.com/Mo7ammedd/LLMProxy/blob/main/docs/configuration.md#multiple-api-keys).
 
@@ -87,7 +87,7 @@ Provider support differs by operation and model. Consult the [compatibility matr
 Obtain the repository and copy `.env.example` to `.env`. Set provider credentials, separate `POSTGRES_PASSWORD` and `REDIS_PASSWORD` values, and this image setting:
 
 ```dotenv
-LLMPROXY_IMAGE=mohammedtv/llmproxy:0.2.0
+LLMPROXY_IMAGE=mohammedtv/llmproxy:0.3.0
 ```
 
 From the checkout:
@@ -123,3 +123,7 @@ Set `LLMPROXY_ADMIN_KEY` before starting the container, then open `/admin` to cr
 `/health/live` checks the process; `/health/ready` checks storage, Redis, provider configuration and shutdown state. Health checks do not call a live LLM API. The image includes a Docker health check. CLI commands include `keys create`, `migrate`, `reservations recover` and `healthcheck`.
 
 For production, pin a version or digest, persist and back up the database, configure TLS at a trusted reverse proxy, and use the [operations guide](https://github.com/Mo7ammedd/LLMProxy/blob/main/docs/operations.md) for SSE proxy settings, migrations, telemetry and recovery.
+
+## Provider operations and release verification
+
+Version 0.3 adds encrypted dashboard-managed provider keys, shared Redis rotation/cooldowns, optional credential/model probes and durable operational alerts. [Settings and API reference](https://github.com/Mo7ammedd/LLMProxy/blob/main/docs/provider-operations.md). Images have verified Sigstore signatures and scan attestations; releases include SPDX SBOMs, provenance and vulnerability reports. [Verify signatures and review the scan policy](https://github.com/Mo7ammedd/LLMProxy/blob/main/docs/releases.md#signatures-sboms-and-vulnerability-policy).

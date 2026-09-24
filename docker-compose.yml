@@ -2,7 +2,7 @@ name: llmproxy
 
 services:
   llmproxy:
-    image: ${LLMPROXY_IMAGE:-mohammedtv/llmproxy:0.2.0}
+    image: ${LLMPROXY_IMAGE:-mohammedtv/llmproxy:0.3.0}
     build:
       context: .
     ports:
@@ -43,6 +43,18 @@ services:
       LLMPROXY_BOOTSTRAP_KEY: "${LLMPROXY_BOOTSTRAP_KEY:-}"
       LLMPROXY_BOOTSTRAP_OWNER: "${LLMPROXY_BOOTSTRAP_OWNER:-bootstrap}"
       LLMPROXY_ADMIN_KEY: "${LLMPROXY_ADMIN_KEY:-}"
+      LLMPROXY_PROVIDER_KEY_ENCRYPTION_KEY: "${LLMPROXY_PROVIDER_KEY_ENCRYPTION_KEY:-}"
+      LLMProxy__Operations__LiveChecksEnabled: "${LLMProxy__Operations__LiveChecksEnabled:-false}"
+      LLMProxy__Alerts__Enabled: "${LLMProxy__Alerts__Enabled:-true}"
+      LLMProxy__Alerts__EvaluationSeconds: "${LLMProxy__Alerts__EvaluationSeconds:-60}"
+      LLMProxy__Alerts__WindowMinutes: "${LLMProxy__Alerts__WindowMinutes:-5}"
+      LLMProxy__Alerts__MinimumAttempts: "${LLMProxy__Alerts__MinimumAttempts:-20}"
+      LLMProxy__Alerts__BudgetPercent: "${LLMProxy__Alerts__BudgetPercent:-80}"
+      LLMProxy__Alerts__ErrorPercent: "${LLMProxy__Alerts__ErrorPercent:-20}"
+      LLMProxy__Alerts__AverageLatencyMs: "${LLMProxy__Alerts__AverageLatencyMs:-10000}"
+      LLMProxy__Alerts__WebhookUrl: "${LLMProxy__Alerts__WebhookUrl:-}"
+      LLMProxy__Alerts__WebhookBearerToken: "${LLMProxy__Alerts__WebhookBearerToken:-}"
+      LLMProxy__Alerts__AllowInsecureWebhook: "${LLMProxy__Alerts__AllowInsecureWebhook:-false}"
       OTEL_EXPORTER_OTLP_ENDPOINT: "${OTEL_EXPORTER_OTLP_ENDPOINT:-}"
     volumes:
       - application_data:/data

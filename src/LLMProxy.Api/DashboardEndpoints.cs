@@ -16,6 +16,7 @@ public static class DashboardEndpoints
         }).AllowAnonymous();
         endpoints.MapGet("/admin/console.css", () => Asset("console.css", "text/css")).AllowAnonymous();
         endpoints.MapGet("/admin/console.js", () => Asset("console.js", "text/javascript")).AllowAnonymous();
+        endpoints.MapGet("/admin/icon.svg", () => Asset("icon.svg", "image/svg+xml")).AllowAnonymous();
     }
     private static IResult Asset(string name, string contentType)
     {

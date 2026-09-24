@@ -6,7 +6,7 @@ import sys
 import tempfile
 from pathlib import Path
 from smoke_common import (ADMIN_KEY, KEY, PROVIDER_NAMES, ROOT, check_http, check_persisted_usage,
-                          check_sdks, check_protocol_sdks, isolated_environment, provider_environment, wait_ready)
+                          check_sdks, check_protocol_sdks, check_provider_operations, isolated_environment, provider_environment, wait_ready)
 
 
 def free_port():
@@ -30,6 +30,8 @@ def main():
             "LLMProxy__Storage__AutoMigrate": "true",
             "LLMPROXY_BOOTSTRAP_KEY": KEY, "LLMPROXY_ADMIN_KEY": ADMIN_KEY,
             "OTEL_EXPORTER_OTLP_ENDPOINT": "",
+            "LLMPROXY_PROVIDER_KEY_ENCRYPTION_KEY": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+            "LLMProxy__Operations__LiveChecksEnabled": "true",
         })
         environment.update(provider_environment(args.provider, f"http://127.0.0.1:{mock_port}"))
         log_path = Path(temporary) / "server.log"
@@ -45,6 +47,7 @@ def main():
                 check_persisted_usage(base)
                 if args.provider == "openai":
                     check_protocol_sdks(base)
+                    check_provider_operations(base)
                 print(f"Source smoke test passed for {args.provider}; no external LLM provider was contacted.", flush=True)
             except Exception:
                 log.flush()

@@ -9,10 +9,12 @@ using Polly.Timeout;
 
 namespace LLMProxy.Providers;
 
-public sealed class ProviderHttpTransport(IHttpClientFactory clients, TimeProvider? time = null)
+public sealed class ProviderHttpTransport(IHttpClientFactory clients, TimeProvider? time = null,
+    IProviderPoolState? poolState = null, string? accountName = null)
 {
     private readonly ConditionalWeakTable<ProviderConnectionOptions, ProviderKeyPool> _keyPools = new();
     private readonly TimeProvider _time = time ?? TimeProvider.System;
+    private readonly IProviderPoolState _poolState = poolState ?? new MemoryProviderPoolState(time ?? TimeProvider.System);
 
     public async Task<HttpResponseMessage> SendAsync(string provider, Uri endpoint, JsonObject payload,
         IReadOnlyDictionary<string, string> headers, bool streaming, CancellationToken cancellationToken,
@@ -20,8 +22,8 @@ public sealed class ProviderHttpTransport(IHttpClientFactory clients, TimeProvid
     {
         // Buffer the bounded JSON payload once, providing Content-Length and a replayable body for retries.
         var body = JsonSerializer.SerializeToUtf8Bytes(payload);
-        var pool = connection is null ? null : _keyPools.GetValue(connection, value => new(value, _time));
-        var keys = pool?.Next();
+        var pool = connection is null ? null : _keyPools.GetValue(connection, value => new(value, _poolState, accountName ?? provider));
+        var keys = pool is null ? null : await pool.NextAsync(cancellationToken);
         if (keys is not { Count: > 0 })
             return await SendAttemptAsync(provider, endpoint, body, headers, streaming, null, false,
                 apiKeyHeader, apiKeyPrefix, cancellationToken);
@@ -30,7 +32,7 @@ public sealed class ProviderHttpTransport(IHttpClientFactory clients, TimeProvid
         foreach (var key in keys)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (!pool!.IsAvailable(key)) continue;
+            if (!await pool!.IsAvailableAsync(key, cancellationToken)) continue;
             try
             {
                 // Only HTTP establishment is retried here. A successful response/stream stays on this key.
@@ -40,11 +42,11 @@ public sealed class ProviderHttpTransport(IHttpClientFactory clients, TimeProvid
             catch (ProviderException ex) when (pool.HasMultipleKeys && ex.IsTransient)
             {
                 if (ex.Code is "provider_authentication_failed" or "provider_rate_limited")
-                    pool.CoolDown(key, ex.RetryAfterSeconds);
+                    await pool.CoolDownAsync(key, ex.RetryAfterSeconds, cancellationToken);
                 lastError = ex;
             }
         }
-        throw lastError ?? pool!.Unavailable();
+        throw lastError ?? await pool!.UnavailableAsync(cancellationToken);
     }
 
     private async Task<HttpResponseMessage> SendAttemptAsync(string provider, Uri endpoint, byte[] body,
