@@ -1,0 +1,89 @@
+# Images and releases
+
+## Current release
+
+LLMProxy 0.2.0 supports `linux/amd64` and `linux/arm64`. Docker selects the platform from the multi-platform image index.
+
+```bash
+docker pull mohammedtv/llmproxy:0.2.0
+```
+
+For an immutable deployment, pin the Docker Hub image digest:
+
+```bash
+docker pull mohammedtv/llmproxy@sha256:a8bd1b3e93b12549733b86fbb0be9809704924e2a2e27bee075df4c7ab56d3db
+```
+
+Use the same image reference in `docker run` or as `LLMPROXY_IMAGE` in the Compose `.env`. Read the [changelog and upgrade notes](../CHANGELOG.md) before replacing an existing deployment.
+
+The `v0.2.0` source tag points to commit `1911fc881e39bbe033a7fa57a4d7ce9573a05c6c`. Docker Hub's `0.2.0` image was copied from the [verified build of that commit](https://github.com/Mo7ammedd/LLMProxy/actions/runs/35991763024) before the Git tag was added. Its original digest is retained. GHCR's `v0.2.0` image is built by the tag workflow from the same source; its build metadata can produce a different digest. Subsequent builds using the updated workflow publish one build to both registries and verify that their digests match.
+
+## Tag policy
+
+| Trigger | Docker Hub: `mohammedtv/llmproxy` | GHCR: `ghcr.io/mo7ammedd/llmproxy` | GitHub release |
+| --- | --- | --- | --- |
+| `main` push | `latest`, `sha-<commit>` | `latest`, `sha-<commit>` | None |
+| Stable tag such as `v0.3.0` | `0.3.0`, `0.3`, `latest`, `sha-<commit>` | `v0.3.0`, `v0.3`, `latest`, `sha-<commit>` | Stable |
+| Prerelease such as `v0.3.0-rc.1` | `0.3.0-rc.1`, `sha-<commit>` | `v0.3.0-rc.1`, `sha-<commit>` | Prerelease |
+| Pull request | None | None | None |
+
+`latest` includes successful main builds and stable release builds. Minor aliases and `latest` move as new builds are published; pin a full version or digest for production. Do not move Git release tags or replace already published full-version images. The `sha-` suffix normally uses the first seven commit characters; the digest is the immutable identifier.
+
+Manual `workflow_dispatch` runs follow the same checks and publication rules for the selected ref. A manual feature-branch run publishes its `sha-` tag, while `main` also updates `latest`. Use a pull request when you only want validation. The Docker Hub overview is synchronized only after a successful `main` publication, so historical tags and feature branches cannot replace the current overview.
+
+The [workflow](../.github/workflows/ci.yml) requires solution/format/database tests, a recovery drill and native ARM64 and AMD64 container/SDK checks before publication. It then inspects both registry indexes by digest and requires both runnable platforms. A tagged release is created only after the image job passes.
+
+## Repository configuration
+
+The maintainer configures these GitHub Actions values under repository **Settings → Secrets and variables → Actions**:
+
+| Type | Name | Value / purpose |
+| --- | --- | --- |
+| Variable | `DOCKERHUB_USERNAME` | `mohammedtv`; also selects the Docker Hub namespace for `llmproxy` |
+| Secret | `DOCKERHUB_TOKEN` | Docker Hub access token with permission to push `llmproxy` and update its overview |
+| Built in token | `GITHUB_TOKEN` | Supplied by GitHub; package writes are granted only to the image job, release writes only to the release job |
+
+To configure or rotate the Docker Hub values with `gh`:
+
+```bash
+gh variable set DOCKERHUB_USERNAME --repo Mo7ammedd/LLMProxy --body mohammedtv
+gh secret set DOCKERHUB_TOKEN --repo Mo7ammedd/LLMProxy
+```
+
+The second command prompts without displaying the token. No registry credential belongs in `.env.example`, source, release notes or workflow logs. Pull-request runs skip registry authentication and publication. Missing publication settings fail non-PR image jobs explicitly.
+
+Docker Hub's repository is public. GHCR package visibility is a separate setting; if a package is private, clients need a GitHub token with `read:packages` and access to the package. Publishing does not change visibility settings.
+
+The Docker Hub overview is maintained in [dockerhub.md](dockerhub.md). The publication job updates it through the registry API and reads it back to verify the exact content. Keep overview links absolute so they work on Docker Hub.
+
+## Cutting a release
+
+1. Choose an unused version. Update `Directory.Build.props` and `docs/openapi.yaml`, move the relevant `Unreleased` changelog entries into a dated version section, and review upgrade/migration notes. Update the pinned examples, Compose default and Docker Hub overview when recommending a new stable release.
+2. Review the changes through a pull request and wait for CI. Merge the reviewed commit and fetch the current `main`.
+3. Create an annotated Git tag on the chosen commit. The workflow validates that the tag matches `Directory.Build.props` exactly. For example, after preparing version 0.3.0:
+
+   ```bash
+   git fetch origin
+   git tag -a v0.3.0 origin/main -m 'LLMProxy v0.3.0'
+   git push origin v0.3.0
+   ```
+
+4. Follow the tag's Actions run. Check that both registries contain the expected version and architectures and that the release was created after the checks passed. For a prerelease, use a version such as `0.3.0-rc.1` in source and `v0.3.0-rc.1` as the tag; it will not move stable minor aliases or `latest`.
+5. Review the generated GitHub release notes. They include image references, the verified digest, changelog/deployment links and GitHub's change list. Add any release-specific operational instructions.
+
+The application and schema may require coordination across replicas. Follow the [migration and backup procedures](operations.md#migrations-and-upgrades) when upgrading a running deployment.
+
+## Verification and interrupted publication
+
+Inspect published tags with Docker Buildx:
+
+```bash
+docker buildx imagetools inspect mohammedtv/llmproxy:0.2.0
+docker buildx imagetools inspect ghcr.io/mo7ammedd/llmproxy:v0.2.0
+```
+
+Check the source revision label, index digest and `linux/amd64` / `linux/arm64` entries against the release and Actions summary. Use the corresponding registry's digest when pinning the original 0.2.0 images.
+
+Publishing to two registries is not an atomic transaction. If a run fails after one registry has accepted an image, inspect both registries before retrying. Preserve any already published full-version digest; copy that verified image to the missing destination rather than rebuilding a replacement under the same version. If the code or release inputs need changes, choose a new version.
+
+GitHub release creation preserves an existing release and its edited notes on reruns. If only release creation failed after successful verification, rerun that failed job. An overview-only failure can be repaired by rerunning the overview script with the same repository settings; it does not require rebuilding an image.

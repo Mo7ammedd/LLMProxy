@@ -245,14 +245,14 @@ To edit arrays, remove default aliases or change an entire routing layout, mount
 You can extract the built-in file without cloning source:
 
 ```bash
-docker create --name llmproxy-config ghcr.io/mo7ammedd/llmproxy:latest
+docker create --name llmproxy-config mohammedtv/llmproxy:0.2.0
 docker cp llmproxy-config:/app/appsettings.json ./appsettings.json
 docker rm llmproxy-config
 # Edit the local file, preserving Logging and relevant Pricing entries.
 docker run -d --name llmproxy -p 4000:4000 --env-file .env \
   -v llmproxy-data:/data \
   -v "$PWD/appsettings.json:/app/appsettings.json:ro" \
-  ghcr.io/mo7ammedd/llmproxy:latest
+  mohammedtv/llmproxy:0.2.0
 ```
 
 For Compose, put the mount in a local `compose.override.yml`. Credentials should remain in the environment or a secure configuration source, not in the replacement JSON.
@@ -262,3 +262,5 @@ For Compose, put the mount in a local `compose.override.yml`. Credentials should
 `OTEL_EXPORTER_OTLP_ENDPOINT` enables OTLP traces and metrics. Standard OpenTelemetry variables such as `OTEL_EXPORTER_OTLP_PROTOCOL`, `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_RESOURCE_ATTRIBUTES` and sampler settings are supported by the SDK. See [operations](operations.md).
 
 The Compose file consumes `POSTGRES_PASSWORD`, `REDIS_PASSWORD`, `LLMPROXY_IMAGE`, `LLMPROXY_PORT` (host port) and `LLMPROXY_AUTO_MIGRATE`. These are Compose inputs, not additional server option aliases. It forwards the provider/bootstrap/admin/OTLP endpoint variables from `.env`; pass other server settings explicitly through a Compose override.
+
+`LLMPROXY_IMAGE` defaults to the public `mohammedtv/llmproxy:0.2.0` image. Use a full version or digest to pin a deployment; `latest` follows successful main builds and stable releases. See [image tags and release verification](releases.md).

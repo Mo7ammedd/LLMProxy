@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Configuration and deployment documentation
+    url: https://github.com/Mo7ammedd/LLMProxy#quick-start-with-docker
+    about: Quick starts, provider setup, SDK examples and operations guidance.
+  - name: Security policy
+    url: https://github.com/Mo7ammedd/LLMProxy/security/policy
+    about: Follow the private reporting guidance for suspected vulnerabilities.

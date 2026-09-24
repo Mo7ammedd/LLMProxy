@@ -8,6 +8,8 @@ Use .NET 10 and keep dependencies directed toward `LLMProxy.Domain`. Provider-sp
 4. For wire-format, deployment or streaming changes, run the SDK and Docker smoke tests described in the README.
 5. Update API/configuration documentation when behavior changes and include migration steps for schema changes.
 
+Use the bug or feature request forms for new issues and fill in the pull request template. Documentation fixes should include link and example checks; CI/workflow changes should include actionlint and the relevant publication checks. Record user-visible changes under `Unreleased` in [CHANGELOG.md](CHANGELOG.md). See the [release guide](docs/releases.md) for versioning, image tags and publishing credentials.
+
 Package versions are managed centrally in `Directory.Packages.props`. After an intentional dependency update, run `dotnet restore` and commit affected lock files. Do not update lock files merely to bypass an unexpected restore failure.
 
 Generate migrations for **both** storage engines:

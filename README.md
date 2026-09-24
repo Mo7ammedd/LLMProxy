@@ -1,10 +1,15 @@
 # LLMProxy
 
+[![Build, test and publish](https://github.com/Mo7ammedd/LLMProxy/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Mo7ammedd/LLMProxy/actions/workflows/ci.yml)
+[![GitHub release](https://img.shields.io/github/v/release/Mo7ammedd/LLMProxy)](https://github.com/Mo7ammedd/LLMProxy/releases/latest)
+[![Docker Hub](https://img.shields.io/docker/v/mohammedtv/llmproxy?label=Docker%20Hub&sort=semver)](https://hub.docker.com/r/mohammedtv/llmproxy)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 LLMProxy is an MIT-licensed, self-hosted LLM gateway built with C# and .NET 10. Applications connect through OpenAI-compatible HTTP APIs at `http://localhost:4000/v1`, authenticate with gateway keys and select public model aliases. The gateway owns upstream credentials, routing, concurrency, quota enforcement and usage accounting.
 
-This README describes the **0.2.0 source tree**. Build the checkout to run all features below; published images contain the features of their release or commit. Images are distributed through `ghcr.io/mo7ammedd/llmproxy` for `linux/amd64` and `linux/arm64`. PostgreSQL plus Redis supports multiple replicas; SQLite supports a persistent standalone deployment.
+Version **0.2.0** is available on [Docker Hub](https://hub.docker.com/r/mohammedtv/llmproxy) as `mohammedtv/llmproxy:0.2.0` for `linux/amd64` and `linux/arm64`. This README documents that version's gateway features. PostgreSQL plus Redis supports multiple replicas; SQLite supports a persistent standalone deployment. See the [changelog and upgrade notes](CHANGELOG.md) and [image tags and release process](docs/releases.md) for versioned deployments and GHCR images.
 
-[Quick start](#quick-start-with-docker) · [Provider compatibility](#provider-compatibility) · [Multiple upstream keys](#multiple-keys-per-provider) · [SDK examples](#openai-sdk-usage) · [Administration](#gateway-keys-and-administration) · [Configuration reference](docs/configuration.md) · [OpenAPI](docs/openapi.yaml)
+[Quick start](#quick-start-with-docker) · [Provider compatibility](#provider-compatibility) · [Multiple upstream keys](#multiple-keys-per-provider) · [SDK examples](#openai-sdk-usage) · [Administration](#gateway-keys-and-administration) · [Configuration reference](docs/configuration.md) · [OpenAPI](docs/openapi.yaml) · [Releases](https://github.com/Mo7ammedd/LLMProxy/releases)
 
 ## Features
 
@@ -75,23 +80,23 @@ The application layer depends on provider and storage interfaces, never on EF Co
 
 ## Quick start with Docker
 
-From a checkout of the branch or release you want to deploy, create a local `.env` file containing at least one provider credential:
+Create a local `.env` file containing at least one provider credential:
 
 ```dotenv
 OPENAI_API_KEY=your-provider-key
 ```
 
-Build and run that checkout with standalone SQLite storage:
+Pull the public image and run it with standalone SQLite storage:
 
 ```bash
-docker build -t llmproxy:local .
+docker pull mohammedtv/llmproxy:0.2.0
 docker run -d \
   --name llmproxy \
   --restart unless-stopped \
   -p 4000:4000 \
   --env-file .env \
   -v llmproxy-data:/data \
-  llmproxy:local
+  mohammedtv/llmproxy:0.2.0
 
 docker exec llmproxy dotnet LLMProxy.Server.dll keys create \
   --owner my-app --models fast,reasoning,embeddings --rpm 60
@@ -105,9 +110,11 @@ curl http://localhost:4000/v1/models \
   -H "Authorization: Bearer $LLMPROXY_API_KEY"
 ```
 
-The client base URL is **`http://localhost:4000/v1`**. The volume preserves keys, usage and quotas in standalone mode. To obtain a checkout, use `gh repo clone Mo7ammedd/LLMProxy` and select the branch/tag to deploy. Use Compose or external PostgreSQL/Redis before scaling to multiple instances.
+The client base URL is **`http://localhost:4000/v1`**. The volume preserves keys, usage and quotas in standalone mode. Use Compose or external PostgreSQL/Redis before scaling to multiple instances. Both supported architectures use the same image name; Docker selects the matching platform.
 
-To deploy a published build, replace `llmproxy:local` with a release tag or digest from `ghcr.io/mo7ammedd/llmproxy`. A private image requires registry authentication first, using a GitHub token with `read:packages` and repository access:
+To build your own image, use `gh repo clone Mo7ammedd/LLMProxy`, select the desired branch/tag, then run `docker build -t llmproxy:local .` from the checkout. Substitute `llmproxy:local` in the run command.
+
+GHCR images are also distributed through `ghcr.io/mo7ammedd/llmproxy`. If the package is private, authenticate with a GitHub token with `read:packages` and repository access:
 
 ```bash
 printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u YOUR_GITHUB_USERNAME --password-stdin
@@ -116,10 +123,13 @@ printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u YOUR_GITHUB_USERNAME --passw
 ## Docker Compose deployment
 
 ```bash
-# Run from the desired source checkout.
+gh repo clone Mo7ammedd/LLMProxy
+cd LLMProxy
 cp .env.example .env
 # Edit .env: set provider credentials and separate POSTGRES_PASSWORD / REDIS_PASSWORD values.
-docker compose up -d --build
+# Keep LLMPROXY_IMAGE=mohammedtv/llmproxy:0.2.0 to run the published release.
+docker compose pull
+docker compose up -d --no-build
 docker compose exec llmproxy dotnet LLMProxy.Server.dll keys create \
   --owner my-app --models fast,reasoning,embeddings --rpm 60 \
   --monthly-token-limit 1000000 --monthly-budget 20
@@ -128,7 +138,7 @@ curl http://localhost:4000/health/ready
 
 Compose runs the gateway, PostgreSQL 16 and Redis 7 on a dedicated network. Only the gateway port is published. PostgreSQL and Redis data use named volumes; services restart automatically and dependencies have health checks. The gateway runs as a non-root user with a read-only root filesystem.
 
-For a prebuilt deployment, set `LLMPROXY_IMAGE` to the desired published tag/digest, then run `docker compose pull` and `docker compose up -d --no-build`. To stop services while retaining data, use `docker compose down`. Adding `--volumes` deletes the persisted databases.
+The Compose file and `.env.example` default to `mohammedtv/llmproxy:0.2.0`. Set `LLMPROXY_IMAGE` to another published tag or digest to select a different build. To build the current checkout, set `LLMPROXY_IMAGE=llmproxy:local` and run `docker compose up -d --build`. To stop services while retaining data, use `docker compose down`. Adding `--volumes` deletes the persisted databases. Read the [upgrade notes](CHANGELOG.md#upgrading-from-010) before updating an existing database.
 
 ## Running from source
 
@@ -501,25 +511,21 @@ The `migrate` CLI applies pending SQLite or PostgreSQL migrations without starti
 
 See the [remaining roadmap](docs/roadmap.md) for follow-up work and [detailed protocol boundaries](docs/api.md#compatibility) for parameter-level differences.
 
-## GitHub Container Registry and releases
+## Container registries and releases
 
-[GitHub Actions](.github/workflows/ci.yml) builds and tests the solution, exercises real PostgreSQL/Redis, runs a two-instance load/recovery/backup drill, and builds and runs Docker/SDK checks on native AMD64 and ARM64 runners. Publication depends on these checks. These workflows must pass in the repository's CI before a release; local source tests do not certify a container or ARM64 build.
+[GitHub Actions](.github/workflows/ci.yml) builds and tests the solution, exercises real PostgreSQL/Redis, runs a two-instance load/recovery/backup drill, and builds and runs Docker/SDK checks on native AMD64 and ARM64 runners. After these checks pass, it publishes one multi-platform build to Docker Hub and GHCR and verifies the digest and platform manifests in both registries.
 
-- Successful `main` builds publish `latest` and `sha-<commit>` after all required jobs pass.
-- A stable tag such as `v1.0.0` publishes `v1.0.0`, `v1.0`, `latest` and a GitHub release.
-- Prerelease tags publish their version without moving `latest`.
-- Pull requests build and test without pushing an image. Ordinary feature-branch pushes do not trigger this workflow.
-- Manual workflow runs also perform publication; use a pull request for validation without publishing.
-- Images target `linux/amd64` and `linux/arm64`; the workflow includes native runtime Docker tests for both.
+| Source | Docker Hub: `mohammedtv/llmproxy` | GHCR: `ghcr.io/mo7ammedd/llmproxy` |
+| --- | --- | --- |
+| Successful `main` build | `latest`, `sha-<commit>` | `latest`, `sha-<commit>` |
+| Stable Git tag, e.g. `v0.3.0` | `0.3.0`, `0.3`, `latest`, `sha-<commit>` | `v0.3.0`, `v0.3`, `latest`, `sha-<commit>` |
+| Prerelease tag, e.g. `v0.3.0-rc.1` | `0.3.0-rc.1`, `sha-<commit>` | `v0.3.0-rc.1`, `sha-<commit>` |
 
-To cut a release after review:
+Git tags use a `v` prefix; Docker Hub version tags omit it. Stable and prerelease tags create corresponding GitHub releases. Pull requests build and test without registry logins or image publication; ordinary feature-branch pushes do not trigger CI. Manual workflow runs can publish the selected ref, so use pull requests for validation alone. `latest` tracks successful `main` builds as well as stable releases; use a full version or digest for a pinned deployment.
 
-```bash
-git tag v1.0.0
-git push origin v1.0.0
-```
+Version `0.2.0` on Docker Hub is pinned to the previously verified build of commit `1911fc8`. The automated Docker Hub workflow applies to subsequent builds; it does not replace that existing release image. The [release guide](docs/releases.md) records its digest, explains registry credentials and describes versioning, release notes, verification and recovery from failed publication.
 
-The workflow uses the repository's `GITHUB_TOKEN` with package-write permission. No registry password needs to be committed. Package visibility remains private unless an owner changes it. Reusable NuGet packages are a possible future distribution channel; the gateway is a standalone server today.
+GHCR uses the repository's `GITHUB_TOKEN`; Docker Hub uses the `DOCKERHUB_USERNAME` repository variable and encrypted `DOCKERHUB_TOKEN` Actions secret. The maintained [Docker Hub overview](docs/dockerhub.md) is synchronized after successful `main` publication. Reusable NuGet packages remain a possible future distribution channel; the gateway is a standalone server today.
 
 ## Development and testing
 

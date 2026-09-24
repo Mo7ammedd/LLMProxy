@@ -1,0 +1,32 @@
+name: Feature request
+description: Propose an API, provider, administration, documentation or deployment improvement.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Check the [roadmap](https://github.com/Mo7ammedd/LLMProxy/blob/main/docs/roadmap.md) and existing issues first.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case
+      description: Explain who needs this and what is difficult today.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe the API, configuration, UI or deployment behavior you would expect.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives and compatibility
+      description: Existing workarounds and any provider, SDK, storage or backward compatibility constraints.
+  - type: textarea
+    id: validation
+    attributes:
+      label: Example or acceptance criteria
+      description: A small example with fake data or an observable outcome that would demonstrate the feature works.
