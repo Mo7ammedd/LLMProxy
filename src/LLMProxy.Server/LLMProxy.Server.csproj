@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <ItemGroup>
+    <ProjectReference Include="../LLMProxy.Api/LLMProxy.Api.csproj" />
+    <ProjectReference Include="../LLMProxy.Infrastructure/LLMProxy.Infrastructure.csproj" />
+    <ProjectReference Include="../LLMProxy.Providers/LLMProxy.Providers.csproj" />
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Http" />
+    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" />
+  </ItemGroup>
+</Project>
