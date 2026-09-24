@@ -49,7 +49,7 @@ The response uses the OpenAI chat-completion envelope:
 }
 ```
 
-The returned model is always the requested public alias. Underlying provider IDs and credentials do not need to be known by the application. Upstream token reports are used where available. Anthropic cached input and Gemini thought tokens are included in normalized usage.
+The returned model is always the requested public alias. Underlying provider IDs and credentials do not need to be known by the application. Upstream token reports are used where available. Anthropic cached input, Gemini thought tokens and DeepSeek completion/reasoning totals are included in normalized usage. Cohere prefers actual token counts over billed units; Groq's final `x_groq.usage` is normalized to the same usage envelope.
 
 ## Streaming
 
@@ -71,7 +71,7 @@ Without `include_usage`, usage fields/events are omitted from the downstream str
 
 The supported surface is Chat Completions and model listing, not the entire OpenAI product API. The [official Chat Completions reference](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create) defines the envelope and SSE usage convention used here.
 
-| Feature | OpenAI / Azure | Anthropic | Gemini |
+| Feature | OpenAI / Azure / Foundry | Anthropic | Gemini |
 | --- | --- | --- | --- |
 | Text messages, text-part arrays | Yes | Yes | Yes |
 | System/developer instructions | Yes | Combined as system instructions | Combined as system instructions |
@@ -86,7 +86,19 @@ The supported surface is Chat Completions and model listing, not the entire Open
 | `seed`, message `name`, strict tools | Forwarded | Rejected | Rejected |
 | `user` metadata | Forwarded | Omitted | Omitted |
 
-Provider/model availability and restrictions still apply. A request that uses a capability unsupported by the selected provider fails with `unsupported_parameter`; capability-based routing is not implemented. Use a dedicated alias with compatible providers for provider-specific features.
+The added adapters also support text, text-part arrays, tools/results and normal/SSE responses, with these differences:
+
+| Provider | Request translation and limits |
+| --- | --- |
+| Mistral | Developer → system; `max_tokens`; `seed` → `random_seed`; native streamed usage without `stream_options`. Tool arguments returned as objects are converted to JSON strings. Historical tool IDs are mapped consistently to nine alphanumeric characters upstream. Message `name` is accepted only for tool results. |
+| Cohere | Native v2 Chat/SSE translation; developer → system; `max_tokens`; `top_p` → `p` (0.01–0.99); `stop` → `stop_sequences`; seed supported. Named tool choice filters the offered functions and uses `REQUIRED`. Strict tools require all selected functions to be strict. JSON object/schema output cannot be combined with tools. `parallel_tool_calls: false` and message names are rejected. |
+| DeepSeek | Developer → system; `max_tokens`; JSON object output; reasoning history preserved. Seed, JSON schema output, strict beta tools and `parallel_tool_calls: false` are rejected. Thinking defaults are left to the model; forced tool choices may be rejected by a thinking model. |
+| Groq | Developer → system; `max_completion_tokens`; seed, tools and supported structured-output formats forwarded. Message names are rejected. Native final-chunk usage is collected without sending `stream_options`. |
+| Ollama | Developer → system; `max_tokens`; seed and response formats forwarded. Auto tool choice is implicit; `none` removes offered tools. Required/named choices, strict tools, message names and `parallel_tool_calls: false` are rejected. Provider authentication is optional. |
+
+`user` metadata is omitted for Mistral, Cohere, DeepSeek and Ollama. Foundry supports OpenAI v1 chat deployments; model capabilities depend on the deployment and do not include Foundry Agents or the separate Anthropic API.
+
+Provider/model availability and restrictions still apply. Known unsupported adapter parameters fail with `unsupported_parameter`; restrictions enforced upstream return a sanitized `provider_rejected_request`. Capability-based routing is not implemented. Use a dedicated alias with compatible providers for provider-specific features. See the [provider guide](providers.md) for setup and model defaults.
 
 MVP boundaries:
 
@@ -95,7 +107,7 @@ MVP boundaries:
 - System/developer messages must precede the conversation. Every tool response must match an outstanding assistant tool call; outstanding calls must be resolved before the next non-tool message.
 - Function names use ASCII letters, numbers, `_` and `-`, up to 64 characters. Tool arguments must be valid JSON objects. The gateway never executes a tool.
 - Gemini thought signatures attached to function calls are preserved in `tool_calls[].extra_content.google.thought_signature`. Applications using such models must retain this opaque metadata in subsequent tool history. SDKs that discard unknown fields may require explicit metadata preservation or a model without that requirement.
-- Reasoning text is not synthesized into visible output. Gemini thought parts are omitted; usage includes reported thought tokens.
+- DeepSeek's optional assistant `reasoning_content` and streamed `delta.reasoning_content` are preserved separately from `content`. Retain this field in tool history for thinking models; SDKs that discard unknown fields need explicit metadata preservation. It is stripped when forwarding history to other adapters. It is never logged. Gemini/Mistral thought blocks and Cohere tool plans are not exposed. Provider-specific thinking/effort controls are not accepted in this version.
 - Request and output limits are configurable. The default inbound body limit is 1 MiB and default output cap is 1,024 tokens.
 
 ## Errors

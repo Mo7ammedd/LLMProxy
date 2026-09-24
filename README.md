@@ -4,7 +4,7 @@ LLMProxy is an MIT-licensed, self-hosted LLM gateway built with C# and .NET 10. 
 
 The primary distribution is `ghcr.io/mo7ammedd/llmproxy`. PostgreSQL and Redis are the recommended production deployment. A persistent SQLite standalone mode makes a one-container evaluation possible.
 
-This initial MVP supports text chat and function tools, normal completions and SSE streaming across OpenAI, Anthropic, Google Gemini and Azure OpenAI. See the [compatibility boundaries](docs/api.md#compatibility) before moving an existing application.
+The gateway supports text chat, function tools, normal completions and SSE streaming across **OpenAI, Anthropic, Google Gemini, Azure OpenAI, Microsoft Foundry, Mistral, Cohere, DeepSeek, Groq and Ollama**. Foundry supports API keys and Microsoft Entra identities. See the [provider guide](docs/providers.md), [compatibility boundaries](docs/api.md#compatibility) and [remaining production work](docs/roadmap.md).
 
 ## Architecture
 
@@ -17,6 +17,9 @@ flowchart TD
     App --> Anthropic[Anthropic]
     App --> Gemini[Google Gemini]
     App --> Azure[Azure OpenAI]
+    App --> Foundry[Microsoft Foundry]
+    App --> More[Mistral · Cohere · DeepSeek · Groq]
+    App --> Local[Ollama]
     App --> PG[(PostgreSQL)]
     App --> Redis[(Redis)]
 ```
@@ -121,8 +124,16 @@ Configuration is strongly typed and read at startup. Environment variables use .
 | Anthropic | `ANTHROPIC_API_KEY` | Model access in your Anthropic account |
 | Google Gemini | `GEMINI_API_KEY` | Google AI Studio / Gemini API key |
 | Azure OpenAI | `AZURE_OPENAI_API_KEY` | `AZURE_OPENAI_ENDPOINT`; model mappings contain **deployment names** |
+| Microsoft Foundry | `FOUNDRY_API_KEY`, or `FOUNDRY_AUTHENTICATION=EntraId` | `FOUNDRY_ENDPOINT`; OpenAI v1 resource endpoint and deployment names |
+| Mistral | `MISTRAL_API_KEY` | Mistral API access |
+| Cohere | `COHERE_API_KEY` | Native Cohere v2 Chat API |
+| DeepSeek | `DEEPSEEK_API_KEY` | DeepSeek API access |
+| Groq | `GROQ_API_KEY` | GroqCloud API access |
+| Ollama | Optional `OLLAMA_API_KEY` | Explicit `OLLAMA_ENDPOINT`; pull the configured model first |
 
-Azure defaults to API version `2024-10-21`; override `AZURE_OPENAI_API_VERSION` as required. Provider base URLs are configurable, require HTTPS by default and never include credentials in query strings. Providers with missing credentials are skipped. Only usable model aliases are advertised by `/v1/models`.
+Azure OpenAI defaults to API version `2024-10-21`; override `AZURE_OPENAI_API_VERSION` as required. Foundry uses `/openai/v1` without that version parameter. Provider URLs require HTTPS by default and never include credentials in query strings. Unconfigured providers are skipped. Only usable model aliases are advertised by `/v1/models`.
+
+The default `fast` alias includes all ten providers in priority order; only configured providers participate. `reasoning` includes OpenAI, Anthropic, Foundry and DeepSeek. Foundry defaults expect deployments named `gpt-4o-mini` and `gpt-5`; change mappings and prices for your deployment names. [Foundry identity setup](docs/providers.md#microsoft-foundry) · [Ollama and Docker networking](docs/providers.md#ollama).
 
 Other operational environment variables:
 
@@ -266,7 +277,7 @@ This is a configuration excerpt; retain the corresponding `Pricing` entries from
 
 Retries use `Microsoft.Extensions.Http.Resilience`; provider fallback uses Polly resilience pipelines. HTTP 429, 408, temporary 5xx failures, timeouts and connection failures are eligible. Client errors and upstream credential failures are not retried. Streaming never falls back or restarts after an event has been emitted.
 
-Pricing is configured per `provider/upstream-model`, in USD per million input/output tokens. The included prices are **editable estimates**, not a current pricing feed or billing guarantee. Verify rates, model availability, caching discounts and long-context tiers with your providers. [Accounting semantics](docs/architecture.md#accounting-and-failure-recovery).
+Pricing is configured per `provider/upstream-model`, in USD per million input/output tokens. Escape `:` as `%3A` and literal `%` as `%25` in pricing keys; for example, `ollama/llama3.1%3A8b` prices the model `llama3.1:8b`. Keep the original model name in `ProviderModels`. The included prices are **editable estimates**, not a current pricing feed or billing guarantee. Verify rates, model availability, caching discounts and long-context tiers with your providers. [Accounting semantics](docs/architecture.md#accounting-and-failure-recovery).
 
 ## Production deployment
 
@@ -322,10 +333,11 @@ For black-box source and container checks, install the Python and TypeScript exa
 
 ```bash
 python scripts/source_smoke.py
+python scripts/source_smoke.py --provider cohere
 docker build -t llmproxy:smoke .
 python scripts/docker_smoke.py
 ```
 
-The smoke tests exercise normal and streaming requests through the actual Python, TypeScript and C# OpenAI SDKs. Docker tests also verify non-root execution, health, persistent usage after restart and graceful shutdown. All automated provider calls go to local mocks.
+The smoke tests exercise normal and streaming requests through the actual Python, TypeScript and C# OpenAI SDKs. `--provider` accepts `openai`, `foundry`, `mistral`, `cohere`, `deepseek`, `groq` and `ollama`. Docker tests exercise all six added adapters and also verify non-root execution, health, persistent usage after restart and graceful shutdown. All automated provider calls go to mocks; Entra tests inject fake credentials and never contact Azure identity services.
 
 [Contributor guide](CONTRIBUTING.md) · [Security policy](SECURITY.md) · [MIT license](LICENSE).

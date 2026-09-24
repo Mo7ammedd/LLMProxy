@@ -25,7 +25,7 @@ For remote services, configure TLS according to your PostgreSQL/Redis deployment
 
 ## Providers
 
-Each built-in provider has `ApiKey`, `BaseUrl` and `AllowInsecureHttp` under `LLMProxy:Providers:<name>`. Names in this section are `OpenAI`, `Anthropic`, `Gemini` and `AzureOpenAI`; registry names are `openai`, `anthropic`, `gemini` and `azure`.
+Each built-in provider has `ApiKey`, `BaseUrl` and `AllowInsecureHttp` under `LLMProxy:Providers:<section>`. Configuration sections are `OpenAI`, `Anthropic`, `Gemini`, `AzureOpenAI`, `Foundry`, `Mistral`, `Cohere`, `DeepSeek`, `Groq` and `Ollama`. Registry IDs are lowercase, except Azure OpenAI uses `azure`.
 
 | Provider | Default base URL | Credential alias |
 | --- | --- | --- |
@@ -33,8 +33,27 @@ Each built-in provider has `ApiKey`, `BaseUrl` and `AllowInsecureHttp` under `LL
 | Anthropic | `https://api.anthropic.com/v1` | `ANTHROPIC_API_KEY` |
 | Gemini | `https://generativelanguage.googleapis.com/v1beta` | `GEMINI_API_KEY` |
 | Azure | Must be configured | `AZURE_OPENAI_API_KEY` |
+| Microsoft Foundry | Must be configured; resource root or `/openai/v1` | `FOUNDRY_API_KEY`, or Entra identity |
+| Mistral | `https://api.mistral.ai/v1` | `MISTRAL_API_KEY` |
+| Cohere | `https://api.cohere.com/v2` | `COHERE_API_KEY` |
+| DeepSeek | `https://api.deepseek.com/v1` | `DEEPSEEK_API_KEY` |
+| Groq | `https://api.groq.com/openai/v1` | `GROQ_API_KEY` |
+| Ollama | Must be explicitly configured; root or `/v1` | Optional `OLLAMA_API_KEY` |
 
-Credential aliases override the corresponding nested value when set, including an empty value. `AZURE_OPENAI_ENDPOINT` and `AZURE_OPENAI_API_VERSION` override Azure's base URL and API version. Azure's default version is `2024-10-21`; mappings must contain deployment names, not a provider catalog ID unless those names happen to match.
+Credential aliases override the corresponding nested value when set, including an empty value. Every provider also accepts an endpoint alias: replace `_API_KEY` with `_ENDPOINT`, for example `MISTRAL_ENDPOINT` or `FOUNDRY_ENDPOINT`. Blank endpoint aliases retain the default or nested `BaseUrl`, allowing Compose's unused variables to remain empty. `AZURE_OPENAI_API_VERSION` overrides Azure's API version; blank values retain the nested/default version `2024-10-21`.
+
+Foundry settings under `LLMProxy:Providers:Foundry`:
+
+| Setting | Default | Flat alias |
+| --- | --- | --- |
+| `Authentication` | `ApiKey` | `FOUNDRY_AUTHENTICATION`; `ApiKey` or `EntraId` |
+| `TokenScope` | `https://ai.azure.com/.default` | `FOUNDRY_TOKEN_SCOPE` |
+
+`EntraId` uses `DefaultAzureCredential` with managed identity, workload identity or configured Azure credentials. Standard variables include `AZURE_TENANT_ID`, `AZURE_CLIENT_ID` and `AZURE_CLIENT_SECRET`; workload identity also requires `AZURE_FEDERATED_TOKEN_FILE` and the corresponding token-file mount. An explicit injected `Azure.Core.TokenCredential` can replace the default in custom hosts. No identity token is fetched during readiness checks. [Foundry setup and supported endpoint scope](providers.md#microsoft-foundry).
+
+Azure OpenAI and Foundry mappings contain **deployment names**, which may differ from catalog model IDs. Foundry uses the current OpenAI v1 endpoint without a legacy `api-version` query. Project/agent URLs and Anthropic-on-Foundry endpoints use different protocols and are not accepted by this adapter.
+
+Ollama is enabled by a valid explicit `BaseUrl`, without requiring a key. There is no implicit localhost endpoint. `OLLAMA_ALLOW_INSECURE_HTTP=true` is an alias for `LLMProxy:Providers:Ollama:AllowInsecureHttp`; otherwise HTTP endpoints remain disabled. A supplied Ollama key is sent as a bearer credential. Blank optional boolean/authentication aliases retain nested/default values. [Local and Docker Ollama setup](providers.md#ollama).
 
 `AllowInsecureHttp` defaults to false and should only be enabled for a trusted local adapter or test mock. Provider URLs may not contain embedded credentials, query strings or fragments. Authentication is added in headers. Redirects are not followed.
 
@@ -51,9 +70,9 @@ Every public alias under `LLMProxy:Models` has:
 | `RequestsPerMinute` | `600` | Shared limit for this alias |
 | `MaxOutputTokens` | `4096` | Maximum accepted output cap; 1–1,000,000 |
 
-Aliases are case-sensitive and limited to 128 characters. A provider without configured credentials is skipped. At least one alias needs a configured provider for readiness. Configured aliases unavailable with the supplied credentials are not advertised and return `provider_unavailable` when requested directly.
+Aliases are case-sensitive and limited to 128 characters. Unconfigured providers are skipped; Foundry Entra mode and Ollama have the configuration rules described above. At least one alias needs a configured provider for readiness. Configured aliases without a usable provider are not advertised and return `provider_unavailable` when requested directly.
 
-Default aliases are `fast` and `reasoning`; adjust upstream models to match provider availability in your account. The gateway does not validate model availability by making a paid API call at startup.
+Default aliases are `fast` (all ten providers) and `reasoning` (OpenAI, Anthropic, Foundry, DeepSeek). [Default upstream mappings](providers.md#default-models) are examples; adjust them to match availability in your account. The gateway does not validate model availability by making a paid API call at startup. Each built-in provider currently has one endpoint/credential configuration; multiple named accounts for the same adapter are future work.
 
 ## Pricing
 
@@ -73,6 +92,20 @@ Every target needs a `LLMProxy:Pricing:<provider>/<upstream-model>` entry:
 ```
 
 Values are nonnegative USD per million tokens. Zero is allowed for intentionally free/self-hosted models; a missing entry is an error, never implicitly free. Keep prices synchronized with model mappings and your account's actual terms. Flat input/output pricing does not represent every caching, batch, reasoning, regional or long-context discount/tier.
+
+Because `:` is a .NET configuration separator, pricing dictionary keys escape colons as `%3A` and literal percent signs as `%25` (escape percent signs first). This rule applies to any provider/model, not just Ollama. For example:
+
+```json
+{
+  "LLMProxy": {
+    "Pricing": {
+      "ollama/llama3.1%3A8b": { "InputPerMillion": 0, "OutputPerMillion": 0 }
+    }
+  }
+}
+```
+
+The upstream model mapping remains `llama3.1:8b`. Ollama's default zero rate excludes the cost of your hardware/hosting. DeepSeek defaults use peak uncached rates; off-peak and cache discounts are not modeled. Cohere usage prefers actual `usage.tokens`, falling back to `billed_units` only when actual tokens are absent, so estimates can include unbilled tokens.
 
 ## Request and resilience limits
 

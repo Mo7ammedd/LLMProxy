@@ -267,6 +267,9 @@ components:
                   type: { type: string, const: text }
                   text: { type: string }
         name: { type: string, maxLength: 64 }
+        reasoning_content:
+          type: [string, 'null']
+          description: Optional assistant reasoning history, preserved for DeepSeek and stripped when forwarding to other adapters. Also emitted in DeepSeek streaming deltas. Never logged.
         tool_call_id: { type: string }
         tool_calls:
           type: array

@@ -57,6 +57,8 @@ To add a provider:
 
 No router, business service or HTTP endpoint needs a provider-specific branch. Additional strategies can similarly be registered as `IRoutingStrategy` without changing `ModelRouter`.
 
+Ten adapters are registered by default. OpenAI, Azure OpenAI, Foundry, Mistral, DeepSeek, Groq and Ollama share an OpenAI-compatible transport/parser with adapter overrides for endpoint, authentication, payload and response differences. Anthropic, Gemini and Cohere translate their native protocols. Foundry's optional `TokenCredential` and Azure.Identity dependency stay in the Providers project; application policy does not depend on Azure SDK types. [Provider behavior](providers.md).
+
 ## Retry and streaming behavior
 
 `Microsoft.Extensions.Http.Resilience` provides per-provider attempt timeouts, retry with exponential backoff/jitter, `Retry-After` handling, a circuit breaker and a total HTTP timeout. Clients are named per provider so one provider's circuit does not open another's circuit. Redirects and cookies are disabled, preventing credentials from being forwarded to redirect targets.
@@ -65,11 +67,13 @@ The application uses a Polly resilience pipeline for provider fallback. HTTP 429
 
 For streams, the application obtains the first provider event inside the fallback pipeline before committing HTTP 200. After an event is emitted, the stream is never replayed or switched to another provider. All chunks use the same public model name, ID and creation time. Usage is collected regardless of whether the client requests it, and emitted once as a final `choices: []` chunk when `include_usage` is true.
 
-OpenAI/Azure `[DONE]`, Anthropic `message_stop` and Gemini final candidates are checked explicitly. An incomplete stream is an error. Midstream errors produce a sanitized OpenAI error event and close without a successful `[DONE]` marker. A disconnected client cancels upstream work; cleanup uses an independent bounded cancellation token.
+The OpenAI-compatible adapters check both a finish reason and `[DONE]`; Anthropic checks `message_stop`, Gemini checks final candidates and Cohere checks `message-end`. An incomplete stream is an error. Midstream errors produce a sanitized OpenAI error event and close without a successful `[DONE]` marker. A disconnected client cancels upstream work; cleanup uses an independent bounded cancellation token.
 
 ## Accounting and failure recovery
 
 `ApiKey`, `QuotaReservation` and `UsageRecord` are persistent domain entities. Tokens and spending counters are stored on the key, so pruning old usage does not reset lifetime allowances. Monetary counters use integer nano-USD; `IModelPricing` returns decimal per-token prices from configuration.
+
+Pricing keys escape `%` and `:` for .NET configuration paths, allowing tagged model names such as `llama3.1:8b` without changing their upstream identifiers. This encoding belongs to configuration-backed pricing, not provider routing.
 
 Before a request, the gateway estimates input tokens conservatively from UTF-8 bytes plus framing, adds the selected output cap, and reserves the most expensive candidate's estimated cost. This is an admission estimate, not a model-specific tokenizer. A small remaining token balance may require a lower `max_tokens` even for a short prompt.
 
