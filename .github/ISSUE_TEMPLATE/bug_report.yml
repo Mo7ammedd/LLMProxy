@@ -1,0 +1,52 @@
+name: Bug report
+description: Report a reproducible gateway, provider, SDK or deployment problem.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use fake prompts and placeholder credentials. For vulnerabilities, follow the [security policy](https://github.com/Mo7ammedd/LLMProxy/security/policy).
+  - type: input
+    id: version
+    attributes:
+      label: Version or image digest
+      placeholder: mohammedtv/llmproxy:0.2.0 or a commit/digest
+    validations:
+      required: true
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: Deployment
+      options:
+        - Docker with standalone SQLite
+        - Docker Compose with PostgreSQL and Redis
+        - Docker with external PostgreSQL and Redis
+        - From source
+        - Other deployment
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Include a minimal request or SDK example with fake input and redacted credentials.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected and actual behavior
+      description: Include the HTTP status and error code, when applicable.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Provider and environment
+      description: Provider adapter/model, OS and architecture, SDK version, storage mode and number of gateway replicas.
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Sanitized diagnostics
+      description: Relevant logs, health output and configuration excerpts. Remove keys, connection passwords and real request bodies.
+      render: text

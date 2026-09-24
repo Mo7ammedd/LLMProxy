@@ -2,7 +2,7 @@ name: llmproxy
 
 services:
   llmproxy:
-    image: ${LLMPROXY_IMAGE:-ghcr.io/mo7ammedd/llmproxy:latest}
+    image: ${LLMPROXY_IMAGE:-mohammedtv/llmproxy:0.2.0}
     build:
       context: .
     ports:

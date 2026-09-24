@@ -24,11 +24,13 @@ The eight gateway expansion areas are implemented in version 0.2. See the [manag
 | Provider-native batches | Native batch APIs/discounts and scheduled retry queues. Current durable batches run ordinary requests and preserve uncertain interrupted outcomes. |
 | Additional protocols | Image generation, speech generation/transcription, video, log probabilities, Foundry Agents/projects and the separate Anthropic-on-Foundry API. |
 | Shared routing observations | Distributed latency measurements, workload-specific performance targets and broader partition/soak testing. Current latency EWMA is local to each instance. |
-| Release hardening | Explicit image signing/verification, SBOM publication, vulnerability scanning, automated dependency/base-image updates and pinned action revisions. |
+| Release hardening | Image signing/signature verification, SBOM publication, vulnerability scanning, digest-pinned base images and pinned action revisions. |
 | Optional packages | Versioned NuGet distribution if integrators need it. Deployment uses the standalone gateway image. |
 
 ## Validation and distribution
 
 Automated provider tests and SDK smoke runs use deterministic mocks. They do not establish compatibility with every live model, account, region or provider-specific parameter combination. The recovery drill records local measurements in `artifacts/recovery-drill.json`; production capacity requires representative workloads.
 
-The workflow gates publication on unit/provider/database tests, the recovery drill and native AMD64/ARM64 container checks. Adding the ARM64 job is not evidence of a successful remote run; verify the workflow before release. The repository/package visibility and existing publication policy remain unchanged. No release is implied by the version bump in source.
+The [successful 0.2.0 source run](https://github.com/Mo7ammedd/LLMProxy/actions/runs/35991763024) passed unit/provider/database tests, the recovery drill and native AMD64/ARM64 container checks. Each new publication must pass these checks again. Current CI publishes to Docker Hub and GHCR, verifies the image digest/platforms in both registries and synchronizes the Docker Hub overview after main builds. See the [release guide](releases.md) for credentials, tag policy and the original 0.2.0 image provenance.
+
+Dependabot is configured for weekly NuGet, Docker, GitHub Actions, npm and Python dependency updates. Release signing, SBOMs and vulnerability scanning remain the separate follow-up items above.

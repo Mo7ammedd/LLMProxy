@@ -4,6 +4,8 @@
 
 Use the Compose stack, or connect the image to external PostgreSQL and Redis, for production and multiple replicas. Keep model mappings, pricing and Redis namespace consistent across replicas. A single standalone container stores data in SQLite under `/data`; mount a named volume and do not share that SQLite file across running gateway processes.
 
+The public release image is `mohammedtv/llmproxy:0.2.0`, with native `linux/amd64` and `linux/arm64` support. The Compose defaults use this pinned release. See [release tags and digests](releases.md) for GHCR alternatives and the [0.1.0 upgrade notes](../CHANGELOG.md#upgrading-from-010) before migrating existing data.
+
 The image uses a multi-stage build and .NET's minimal chiseled runtime. It runs as UID/GID `1654:1654` with no shell or package manager. Compose also disables additional capabilities and uses a read-only root filesystem. Use `docker exec llmproxy dotnet LLMProxy.Server.dll ...` for CLI operations rather than expecting `/bin/sh` in the image.
 
 For a different internal port:
@@ -11,7 +13,7 @@ For a different internal port:
 ```bash
 docker run -d --name llmproxy -p 8080:8080 --env-file .env \
   -e ASPNETCORE_HTTP_PORTS=8080 -v llmproxy-data:/data \
-  ghcr.io/mo7ammedd/llmproxy:latest
+  mohammedtv/llmproxy:0.2.0
 ```
 
 The built-in health command derives its port from `ASPNETCORE_HTTP_PORTS` or HTTP `ASPNETCORE_URLS`. For unusual bindings or HTTPS-only listeners, supply a reachable `LLMPROXY_HEALTH_URL`.
@@ -87,10 +89,11 @@ ASP.NET Core and HttpClient instrumentation capture HTTP duration/status/connect
 For controlled upgrades, back up data, apply migrations once and then roll out server instances:
 
 ```bash
+# Set LLMPROXY_IMAGE to the new version or digest in .env first.
+docker compose pull llmproxy
 docker compose run --rm llmproxy migrate
 # Set LLMPROXY_AUTO_MIGRATE=false in .env once your migration job owns schema changes.
-docker compose pull
-docker compose up -d
+docker compose up -d --no-build
 ```
 
 Run the migration command with the **new image version** before starting that version's instances. Production runtime credentials can have narrower privileges than the migration role. Startup uses EF Core migration coordination; PostgreSQL/SQLite migration histories are independent.
