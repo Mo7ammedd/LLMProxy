@@ -19,3 +19,4 @@ secrets/
 __pycache__/
 node_modules/
 .venv/
+.cache/

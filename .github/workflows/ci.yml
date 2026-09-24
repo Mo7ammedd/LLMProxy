@@ -284,6 +284,7 @@ jobs:
       - name: Scan, sign and verify published digests
         if: github.event_name != 'pull_request'
         env:
+          TRIVY_CACHE_DIR: ${{ github.workspace }}/.cache/trivy
           IMAGE_DIGEST: ${{ steps.publish.outputs.digest }}
           GHCR_IMAGE: ${{ steps.image.outputs.name }}
           DOCKERHUB_IMAGE: ${{ vars.DOCKERHUB_USERNAME }}/llmproxy
