@@ -99,7 +99,7 @@ jobs:
       - run: npm ci --prefix examples/typescript --ignore-scripts
       - run: dotnet restore examples/csharp --locked-mode
       - run: dotnet build examples/csharp --configuration Release --no-restore
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: Build ARM64 runtime image
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
@@ -171,7 +171,7 @@ jobs:
       - run: dotnet build src/LLMProxy.Server --configuration Release --no-restore
       - name: Source and extended OpenAI SDK compatibility
         run: python scripts/source_smoke.py
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: Build test image
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
